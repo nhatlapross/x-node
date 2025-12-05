@@ -1,0 +1,57 @@
+---
+title: Function: createFile()
+slug: api/function-createfile
+createdAt: 2025-11-21T10:56:35.129Z
+updatedAt: 2025-11-26T17:39:21.362Z
+---
+
+[**@xandeum/web3.js**](docId\:WXgxPNPIdcz6-2b6gH786)
+
+***
+
+[**Xandeum Web3 Library v1.12.0**](docId\:l2rwyC57Gjg6S93MCecr9) / createFile
+
+:::BlockQuote
+**createFile**(`fsid`, `path`, `name`, `wallet`): `Promise`\<`Transaction`>
+:::
+
+Defined in: [**createFile.ts:17**](https://github.com/Xandeum/xandeum-web3.js/blob/master/src/createFile.ts#L17)
+
+Constructs a Solana transaction to create a new file
+within a file system, identified by a file system ID (`fsid`).
+
+## Parameters
+
+### fsid
+
+`string`
+
+A stringified integer representing the file system ID where the file is to be created.
+
+### path
+
+`string`
+
+The absolute or relative path within the file system where the file should be created.
+
+### name
+
+`string`
+
+The name of the new file or directory to be created.
+
+### wallet
+
+`PublicKey`
+
+The public key of the wallet that will sign and authorize the transaction.
+
+## Returns
+
+`Promise`\<`Transaction`>
+
+A Promise that resolves to a Solana `Transaction` object containing the createFile instruction.
+
+## Throws
+
+Will throw an error if `path` or `name` contains invalid characters.

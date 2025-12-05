@@ -1,0 +1,46 @@
+---
+title: Function: getMetadata()
+slug: api/function-getmetadata
+createdAt: 2025-11-21T10:56:35.130Z
+updatedAt: 2025-11-26T17:40:49.890Z
+---
+
+[**@xandeum/web3.js**](docId\:WXgxPNPIdcz6-2b6gH786)
+
+***
+
+[**Xandeum Web3 Library v1.12.0**](docId\:l2rwyC57Gjg6S93MCecr9) / getMetadata
+
+:::BlockQuote
+**getMetadata**(`connection`, `path`): `Promise`\<`any`>
+:::
+
+Defined in: [**getMetadata.ts:26**](https://github.com/Xandeum/xandeum-web3.js/blob/master/src/getMetadata.ts#L26)
+
+Sends a JSON-RPC request to the Xandeum RPC endpoint to retrieve metadata
+about a file or directory at the given path.
+
+This function calls the custom RPC method `getMetadata`, which is implemented
+by the backend to return metadata such as type (file or directory), size,
+timestamps etc.
+
+## Parameters
+
+### connection
+
+`Connection`
+
+The solana web3 connection with Xandeum-compatible JSON-RPC endpoint (e.g., `'https://api.devnet.solana.com'`).
+
+### path
+
+`string`
+
+The filesystem path to query metadata for (e.g., `/documents/myfile.txt`).
+
+## Returns
+
+`Promise`\<`any`>
+
+A `Promise<any>` resolving to the parsed JSON response from the RPC server,
+typically containing a `result` object with metadata fields.
