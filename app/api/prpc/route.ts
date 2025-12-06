@@ -22,7 +22,7 @@ async function makeHttpRequest(
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(postData),
         },
-        timeout: 10000,
+        timeout: 5000, // 5 seconds timeout for faster offline detection
       };
 
       const req = httpModule.request(options, (res) => {

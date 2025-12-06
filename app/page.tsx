@@ -1,6 +1,20 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import dynamic from "next/dynamic";
+
+// Dynamic import for 3D graph (avoid SSR issues with Three.js)
+const NetworkTopology3D = dynamic(
+  () => import("@/components/visualization/NetworkTopology3D"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-[600px] bg-zinc-900 rounded-lg border border-zinc-800 flex items-center justify-center">
+        <div className="text-zinc-400">Loading 3D Network Graph...</div>
+      </div>
+    ),
+  }
+);
 
 // Types based on pRPC API documentation
 interface VersionResponse {
@@ -197,10 +211,10 @@ export default function Home() {
     setNodes(initialNodes);
   }, []);
 
-  // Fetch detailed data for a single node and update state immediately
+  // Fetch detailed data for a single node with progressive loading
   const fetchNodeDataAndUpdate = useCallback(async (pod: NetworkPod, index: number) => {
     const ip = pod.address.split(":")[0];
-    const nodeData: NodeData = {
+    const baseData: NodeData = {
       ip,
       address: pod.address,
       label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${index + 1}`,
@@ -209,47 +223,67 @@ export default function Home() {
       status: "loading",
     };
 
-    // Fetch all three APIs in parallel
-    const [versionRes, statsRes, podsRes] = await Promise.all([
+    // Phase 1: Fetch version and stats first (fastest, most important)
+    const [versionRes, statsRes] = await Promise.all([
       callApi(ip, "get-version"),
       callApi(ip, "get-stats"),
-      callApi(ip, "get-pods"),
     ]);
 
-    let result: NodeData;
-    if (versionRes.error && statsRes.error && podsRes.error) {
-      result = {
-        ...nodeData,
+    // If both failed, mark as offline immediately
+    if (versionRes.error && statsRes.error) {
+      const offlineResult: NodeData = {
+        ...baseData,
         status: "offline",
-        error: versionRes.error || statsRes.error || podsRes.error,
+        error: versionRes.error || statsRes.error,
       };
-    } else {
-      result = {
-        ...nodeData,
-        status: "online",
-        version: versionRes.result as VersionResponse | undefined,
-        stats: statsRes.result as StatsResponse | undefined,
-        pods: podsRes.result as PodsResponse | undefined,
-        lastFetched: Date.now(),
-      };
+      setNodes(prev => prev.map(n => n.address === pod.address ? offlineResult : n));
+      return offlineResult;
     }
 
-    // Update single node in state immediately (lazy load)
-    setNodes(prev => prev.map(n => n.address === pod.address ? result : n));
-    return result;
+    // Update with partial data immediately (online with stats)
+    const partialResult: NodeData = {
+      ...baseData,
+      status: "online",
+      version: versionRes.result as VersionResponse | undefined,
+      stats: statsRes.result as StatsResponse | undefined,
+      lastFetched: Date.now(),
+    };
+    setNodes(prev => prev.map(n => n.address === pod.address ? partialResult : n));
+
+    // Phase 2: Fetch pods data (slower, less critical)
+    const podsRes = await callApi(ip, "get-pods");
+
+    const fullResult: NodeData = {
+      ...partialResult,
+      pods: podsRes.result as PodsResponse | undefined,
+    };
+
+    setNodes(prev => prev.map(n => n.address === pod.address ? fullResult : n));
+    return fullResult;
   }, []);
 
-  // Fetch all nodes data from registry pods (lazy load - update each as it completes)
+  // Fetch all nodes with concurrency limit for better performance
   const fetchAllNodesData = useCallback(async () => {
     if (registryPods.length === 0) return;
 
     setIsLoading(true);
 
-    // Start all fetches in parallel, each updates state when complete
-    const promises = registryPods.map((pod, idx) => fetchNodeDataAndUpdate(pod, idx));
+    // Process in batches with concurrency limit
+    const BATCH_SIZE = 5;
+    const batches = [];
 
-    // Wait for all to complete
-    await Promise.all(promises);
+    for (let i = 0; i < registryPods.length; i += BATCH_SIZE) {
+      batches.push(registryPods.slice(i, i + BATCH_SIZE));
+    }
+
+    for (const batch of batches) {
+      await Promise.all(
+        batch.map((pod, idx) => {
+          const globalIdx = registryPods.indexOf(pod);
+          return fetchNodeDataAndUpdate(pod, globalIdx);
+        })
+      );
+    }
 
     setLastUpdate(new Date());
     setIsLoading(false);
@@ -551,6 +585,18 @@ export default function Home() {
               </div>
             </section>
 
+            {/* Network Topology 3D */}
+            <section className="mb-8">
+              <h2 className="text-lg font-semibold mb-4">Network Topology</h2>
+              <p className="text-sm text-zinc-400 mb-4">
+                3D visualization of node connections. Drag to rotate, scroll to zoom, click node for details.
+              </p>
+              <NetworkTopology3D
+                nodes={nodes}
+                onNodeClick={(node) => setSelectedNode(node.address)}
+              />
+            </section>
+
             {/* Node Grid */}
             <section className="mb-8">
               <h2 className="text-lg font-semibold mb-4">All Nodes ({nodes.length})</h2>
@@ -840,40 +886,84 @@ export default function Home() {
                   {/* Peers Section */}
                   {selectedNodeData.pods && (
                     <div className="p-4 border-t border-zinc-800">
-                      <h3 className="text-sm font-medium text-zinc-400 mb-3">
-                        Known Peers ({selectedNodeData.pods.total_count})
-                      </h3>
+                      <div className="flex justify-between items-center mb-3">
+                        <h3 className="text-sm font-medium text-zinc-400">
+                          Known Peers ({selectedNodeData.pods.total_count})
+                        </h3>
+                        <div className="flex gap-2 text-xs">
+                          <span className="bg-green-500/20 text-green-400 px-2 py-1 rounded">
+                            v0.6.0: {selectedNodeData.pods.pods.filter(p => p.version === "0.6.0").length}
+                          </span>
+                          <span className="bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">
+                            v0.5.1: {selectedNodeData.pods.pods.filter(p => p.version === "0.5.1").length}
+                          </span>
+                        </div>
+                      </div>
                       {selectedNodeData.pods.pods.length > 0 ? (
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                          {selectedNodeData.pods.pods.map((pod, idx) => (
-                            <div
-                              key={idx}
-                              className="flex justify-between items-center bg-zinc-800 rounded p-3"
-                            >
-                              <div>
-                                <div className="font-mono text-sm text-white">
-                                  {pod.address}
+                        <div className="space-y-2 max-h-96 overflow-y-auto">
+                          {selectedNodeData.pods.pods
+                            .sort((a, b) => b.last_seen_timestamp - a.last_seen_timestamp)
+                            .map((pod, idx) => {
+                              const isRecent = Date.now() / 1000 - pod.last_seen_timestamp < 300; // 5 minutes
+                              return (
+                                <div
+                                  key={idx}
+                                  className={`bg-zinc-800 rounded p-3 border-l-2 ${
+                                    isRecent ? "border-green-500" : "border-zinc-600"
+                                  }`}
+                                >
+                                  <div className="flex justify-between items-start">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span
+                                          className={`w-2 h-2 rounded-full ${
+                                            isRecent ? "bg-green-500" : "bg-zinc-500"
+                                          }`}
+                                        />
+                                        <span className="font-mono text-sm text-white">
+                                          {pod.address}
+                                        </span>
+                                        <span
+                                          className={`text-xs px-1.5 py-0.5 rounded ${
+                                            pod.version === "0.6.0"
+                                              ? "bg-green-500/20 text-green-400"
+                                              : "bg-yellow-500/20 text-yellow-400"
+                                          }`}
+                                        >
+                                          v{pod.version}
+                                        </span>
+                                      </div>
+                                      {pod.pubkey && (
+                                        <div
+                                          className="font-mono text-xs text-zinc-500 mt-1 truncate cursor-pointer hover:text-zinc-300"
+                                          title={pod.pubkey}
+                                          onClick={() => navigator.clipboard.writeText(pod.pubkey || "")}
+                                        >
+                                          {pod.pubkey}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="text-right ml-4 flex-shrink-0">
+                                      <div className="text-xs text-zinc-400">
+                                        {isRecent ? "Active" : "Last seen"}
+                                      </div>
+                                      <div className="text-xs text-zinc-500">
+                                        {formatTimestamp(pod.last_seen_timestamp)}
+                                      </div>
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className="text-xs text-zinc-500">
-                                  v{pod.version}
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-xs text-zinc-400">
-                                  Last seen
-                                </div>
-                                <div className="text-xs text-zinc-500">
-                                  {pod.last_seen}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
+                              );
+                            })}
                         </div>
                       ) : (
                         <div className="text-sm text-zinc-500 bg-zinc-800 rounded p-4 text-center">
                           No peers discovered yet
                         </div>
                       )}
+                      <div className="mt-3 text-xs text-zinc-500">
+                        Peers discovered via Gossip Protocol (port 9001). Green indicator = active within 5 minutes.
+                      </div>
                     </div>
                   )}
 
