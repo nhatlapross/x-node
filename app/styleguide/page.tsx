@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Copy, ExternalLink, Info, Search, Settings, TrendingUp, TrendingDown, ChevronRight, Moon, Sun } from 'lucide-react'
+import { Copy, ExternalLink, Info, Search, Settings, TrendingUp, TrendingDown, ChevronRight, Moon, Sun, Loader2, LayoutDashboard, Server, Activity, Users, Database, Wallet, BarChart3 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -15,44 +15,75 @@ import {
   DotDivider,
   DotLine,
   DotProgress,
+  // Animation components
+  FadeIn,
+  Stagger,
+  StaggerItem,
+  ScaleOnHover,
+  Pulse,
+  Shimmer,
+  AnimatedProgress,
+  Typewriter,
+  Reveal,
+  GlitchText,
+  Floating,
+  Spin,
+  // Logo
+  Logo,
+  LogoIcon,
 } from '@/components/common'
+import { type NavSection } from '@/components/layout'
 
-// Section wrapper component
+// Section wrapper component with animation
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="mb-16">
-      <h2 className="text-sm tracking-widest uppercase text-muted-foreground mb-2">{title}</h2>
-      <DotDivider className="mb-8" />
-      {children}
-    </section>
+    <FadeIn direction="up" className="mb-16">
+      <section>
+        <h2 className="text-sm tracking-widest uppercase text-muted-foreground mb-2">{title}</h2>
+        <DotDivider className="mb-8" />
+        {children}
+      </section>
+    </FadeIn>
   )
 }
 
-// Color swatch component
+// Color swatch component with hover animation
 function ColorSwatch({ name, variable, fallback }: { name: string; variable: string; fallback: string }) {
   return (
-    <div className="flex flex-col gap-2">
-      <div
-        className="w-full h-20 border border-border"
-        style={{ backgroundColor: `var(${variable}, ${fallback})` }}
-      />
-      <div>
-        <p className="text-sm font-medium">{name}</p>
-        <p className="text-xs font-mono text-muted-foreground">{variable}</p>
+    <ScaleOnHover scale={1.03}>
+      <div className="flex flex-col gap-2 cursor-pointer">
+        <div
+          className="w-full h-20 border border-border"
+          style={{ backgroundColor: `var(${variable}, ${fallback})` }}
+        />
+        <div>
+          <p className="text-sm font-medium">{name}</p>
+          <p className="text-xs font-mono text-muted-foreground">{variable}</p>
+        </div>
       </div>
-    </div>
+    </ScaleOnHover>
   )
 }
 
 export default function StyleguidePage() {
-  const [isDark, setIsDark] = useState(false)
+  const [isDark, setIsDark] = useState(() => {
+    // Check if we're on the client and get initial state
+    if (typeof window !== 'undefined') {
+      return document.documentElement.classList.contains('dark')
+    }
+    return false
+  })
 
   useEffect(() => {
-    // Check system preference on mount
+    // Sync with system preference on mount (only updates DOM, not state directly)
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-    setIsDark(prefersDark)
-    if (prefersDark) {
+    const currentIsDark = document.documentElement.classList.contains('dark')
+
+    // Only update if needed and not already in sync
+    if (!currentIsDark && prefersDark) {
       document.documentElement.classList.add('dark')
+      // Use a microtask to avoid synchronous setState warning
+      queueMicrotask(() => setIsDark(true))
     }
   }, [])
 
@@ -324,6 +355,168 @@ export default function StyleguidePage() {
         </Section>
 
         {/* ============================================= */}
+        {/* ANIMATIONS */}
+        {/* ============================================= */}
+        <Section title="Animations (Framer Motion)">
+          <div className="space-y-12">
+            {/* Fade In Animations */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Fade In Variants</p>
+              <div className="grid md:grid-cols-4 gap-4">
+                <FadeIn direction="up" delay={0}>
+                  <div className="p-4 border border-border bg-card text-center">
+                    <p className="text-sm">Fade Up</p>
+                  </div>
+                </FadeIn>
+                <FadeIn direction="down" delay={0.1}>
+                  <div className="p-4 border border-border bg-card text-center">
+                    <p className="text-sm">Fade Down</p>
+                  </div>
+                </FadeIn>
+                <FadeIn direction="left" delay={0.2}>
+                  <div className="p-4 border border-border bg-card text-center">
+                    <p className="text-sm">Fade Left</p>
+                  </div>
+                </FadeIn>
+                <FadeIn direction="right" delay={0.3}>
+                  <div className="p-4 border border-border bg-card text-center">
+                    <p className="text-sm">Fade Right</p>
+                  </div>
+                </FadeIn>
+              </div>
+            </div>
+
+            {/* Stagger Animation */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Stagger Children</p>
+              <Stagger className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <StaggerItem key={i}>
+                    <div className="p-4 border border-border bg-card text-center">
+                      <p className="text-sm font-mono">{i}</p>
+                    </div>
+                  </StaggerItem>
+                ))}
+              </Stagger>
+            </div>
+
+            {/* Scale on Hover */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Scale on Hover</p>
+              <div className="flex flex-wrap gap-4">
+                <ScaleOnHover scale={1.05}>
+                  <div className="p-6 border border-border bg-card cursor-pointer">
+                    <p className="text-sm">Hover me (1.05x)</p>
+                  </div>
+                </ScaleOnHover>
+                <ScaleOnHover scale={1.1}>
+                  <div className="p-6 border border-primary bg-card cursor-pointer">
+                    <p className="text-sm">Hover me (1.1x)</p>
+                  </div>
+                </ScaleOnHover>
+              </div>
+            </div>
+
+            {/* Reveal Animation */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Reveal Animation</p>
+              <div className="flex flex-wrap gap-8">
+                <Reveal>
+                  <p className="text-2xl font-mono">14.55M SOL</p>
+                </Reveal>
+                <Reveal>
+                  <p className="text-2xl tracking-widest uppercase">STAKED</p>
+                </Reveal>
+              </div>
+            </div>
+
+            {/* Typewriter Effect */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Typewriter Effect</p>
+              <div className="p-6 border border-border bg-card">
+                <p className="text-lg font-mono">
+                  <Typewriter text="Decentralized. Secure. Fast." speed={0.08} />
+                </p>
+              </div>
+            </div>
+
+            {/* Glitch Text */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Glitch Text (Hover)</p>
+              <div className="p-6 border border-border bg-card">
+                <p className="text-2xl tracking-widest uppercase">
+                  <GlitchText text="XNODE" />
+                </p>
+              </div>
+            </div>
+
+            {/* Animated Progress */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Animated Progress</p>
+              <div className="space-y-4">
+                <div>
+                  <div className="flex justify-between text-xs text-muted-foreground mb-2">
+                    <span>Network Sync</span>
+                    <span>85%</span>
+                  </div>
+                  <AnimatedProgress percent={85} duration={1.2} />
+                </div>
+                <div>
+                  <div className="flex justify-between text-xs text-muted-foreground mb-2">
+                    <span>Staking Progress</span>
+                    <span>42%</span>
+                  </div>
+                  <AnimatedProgress percent={42} duration={1.5} delay={0.5} barClassName="bg-[var(--success)]" />
+                </div>
+              </div>
+            </div>
+
+            {/* Continuous Animations */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Continuous Animations</p>
+              <div className="flex flex-wrap items-center gap-8">
+                <div className="flex flex-col items-center gap-2">
+                  <Pulse>
+                    <div className="w-12 h-12 bg-primary flex items-center justify-center">
+                      <span className="text-primary-foreground text-xs">LIVE</span>
+                    </div>
+                  </Pulse>
+                  <span className="text-xs text-muted-foreground">Pulse</span>
+                </div>
+                <div className="flex flex-col items-center gap-2">
+                  <Floating distance={8}>
+                    <div className="w-12 h-12 border border-primary flex items-center justify-center">
+                      <span className="text-primary text-xl">^</span>
+                    </div>
+                  </Floating>
+                  <span className="text-xs text-muted-foreground">Float</span>
+                </div>
+                <div className="flex flex-col items-center gap-2">
+                  <Spin duration={2}>
+                    <Loader2 className="w-8 h-8 text-primary" />
+                  </Spin>
+                  <span className="text-xs text-muted-foreground">Spin</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Shimmer/Skeleton */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Shimmer / Loading States</p>
+              <div className="p-6 border border-border bg-card space-y-4">
+                <Shimmer height={24} width="60%" />
+                <Shimmer height={16} width="100%" />
+                <Shimmer height={16} width="80%" />
+                <div className="flex gap-4 mt-4">
+                  <Shimmer height={40} width={100} />
+                  <Shimmer height={40} width={100} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </Section>
+
+        {/* ============================================= */}
         {/* BUTTONS */}
         {/* ============================================= */}
         <Section title="Buttons">
@@ -441,7 +634,7 @@ export default function StyleguidePage() {
             <Badge variant="secondary">Secondary</Badge>
             <Badge variant="outline">Outline</Badge>
             <Badge variant="destructive">Destructive</Badge>
-            <Badge className="bg-[var(--success)] hover:bg-[var(--success)]/90 text-white">Success</Badge>
+            <Badge className="bg-success hover:bg-success/90 text-white">Success</Badge>
           </div>
         </Section>
 
@@ -471,31 +664,47 @@ export default function StyleguidePage() {
         {/* STATS / METRICS */}
         {/* ============================================= */}
         <Section title="Stats & Metrics">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <div className="p-4 border border-border bg-card">
-              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">Network TPS</p>
-              <p className="text-3xl font-light font-mono">719</p>
-            </div>
+          <Stagger className="grid grid-cols-2 md:grid-cols-4 gap-6" staggerDelay={0.1}>
+            <StaggerItem>
+              <ScaleOnHover>
+                <div className="p-4 border border-border bg-card">
+                  <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">Network TPS</p>
+                  <p className="text-3xl font-light font-mono">719</p>
+                </div>
+              </ScaleOnHover>
+            </StaggerItem>
 
-            <div className="p-4 border border-border bg-card">
-              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">Total Staked</p>
-              <p className="text-3xl font-light font-mono">14.55M</p>
-              <p className="text-xs text-muted-foreground">SOL</p>
-            </div>
+            <StaggerItem>
+              <ScaleOnHover>
+                <div className="p-4 border border-border bg-card">
+                  <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">Total Staked</p>
+                  <p className="text-3xl font-light font-mono">14.55M</p>
+                  <p className="text-xs text-muted-foreground">SOL</p>
+                </div>
+              </ScaleOnHover>
+            </StaggerItem>
 
-            <div className="p-4 border border-border bg-card">
-              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">APY</p>
-              <p className="text-3xl font-light font-mono text-primary">6.62%</p>
-            </div>
+            <StaggerItem>
+              <ScaleOnHover>
+                <div className="p-4 border border-border bg-card">
+                  <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">APY</p>
+                  <p className="text-3xl font-light font-mono text-primary">6.62%</p>
+                </div>
+              </ScaleOnHover>
+            </StaggerItem>
 
-            <div className="p-4 border border-border bg-card">
-              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">24h Change</p>
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-[var(--success)]" />
-                <p className="text-3xl font-light font-mono text-[var(--success)]">+2.4%</p>
-              </div>
-            </div>
-          </div>
+            <StaggerItem>
+              <ScaleOnHover>
+                <div className="p-4 border border-border bg-card">
+                  <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">24h Change</p>
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-success" />
+                    <p className="text-3xl font-light font-mono text-success">+2.4%</p>
+                  </div>
+                </div>
+              </ScaleOnHover>
+            </StaggerItem>
+          </Stagger>
 
           <div className="mt-8">
             <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Stats with Brackets</p>
@@ -542,7 +751,7 @@ export default function StyleguidePage() {
                   </td>
                   <td className="px-4 py-4 text-right font-mono text-sm">$142.50</td>
                   <td className="px-4 py-4 text-right">
-                    <span className="text-[var(--success)] font-mono text-sm flex items-center justify-end gap-1">
+                    <span className="text-success font-mono text-sm flex items-center justify-end gap-1">
                       <TrendingUp className="w-3 h-3" />
                       +5.2%
                     </span>
@@ -574,7 +783,7 @@ export default function StyleguidePage() {
                   </td>
                   <td className="px-4 py-4 text-right font-mono text-sm">$43,250.00</td>
                   <td className="px-4 py-4 text-right">
-                    <span className="text-[var(--success)] font-mono text-sm flex items-center justify-end gap-1">
+                    <span className="text-success font-mono text-sm flex items-center justify-end gap-1">
                       <TrendingUp className="w-3 h-3" />
                       +2.1%
                     </span>
@@ -608,6 +817,171 @@ export default function StyleguidePage() {
                 <span className="text-xs text-muted-foreground">{name}</span>
               </div>
             ))}
+          </div>
+        </Section>
+
+        {/* ============================================= */}
+        {/* LAYOUT PATTERNS */}
+        {/* ============================================= */}
+        <Section title="Layout Patterns — Sidebar Navigation">
+          <div className="space-y-8">
+            {/* Logo Demo */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Logo (Light/Dark Mode Aware)</p>
+              <div className="flex items-center gap-8 p-6 border border-border bg-card">
+                <div className="flex flex-col items-center gap-3">
+                  <Logo height={40} />
+                  <span className="text-xs text-muted-foreground">Full Logo (Expanded)</span>
+                </div>
+                <div className="flex flex-col items-center gap-3">
+                  <LogoIcon size={40} />
+                  <span className="text-xs text-muted-foreground">Icon Only (Collapsed)</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Navigation Items (Active State with Left Accent Border)</p>
+              <div className="max-w-xs border border-border bg-sidebar">
+                {/* Demo navigation items */}
+                {(() => {
+                  const demoNavSections: NavSection[] = [
+                    {
+                      title: 'Overview',
+                      items: [
+                        { label: 'Dashboard', href: '#dashboard', icon: LayoutDashboard },
+                        { label: 'Analytics', href: '#analytics', icon: BarChart3, badge: 'New' },
+                      ],
+                    },
+                    {
+                      title: 'Network',
+                      items: [
+                        { label: 'Nodes', href: '#nodes', icon: Server, badge: 42 },
+                        { label: 'Activity', href: '#activity', icon: Activity },
+                        { label: 'Validators', href: '#validators', icon: Users },
+                      ],
+                    },
+                    {
+                      title: 'Resources',
+                      items: [
+                        { label: 'Storage', href: '#storage', icon: Database },
+                        { label: 'Wallet', href: '#wallet', icon: Wallet },
+                      ],
+                    },
+                  ]
+                  const activeItem = '#nodes'
+
+                  return (
+                    <nav className="py-4">
+                      {demoNavSections.map((section, sectionIdx) => (
+                        <div key={sectionIdx} className="mb-4">
+                          {section.title && (
+                            <div className="px-6 mb-2">
+                              <span className="text-xs uppercase tracking-widest text-muted-foreground">
+                                {section.title}
+                              </span>
+                            </div>
+                          )}
+                          <ul className="space-y-1">
+                            {section.items.map((item) => {
+                              const isActive = item.href === activeItem
+                              const Icon = item.icon
+
+                              return (
+                                <li key={item.href}>
+                                  <div
+                                    className={`relative flex items-center gap-3 px-6 py-3 text-sm transition-colors cursor-pointer ${
+                                      isActive
+                                        ? 'text-sidebar-primary bg-sidebar-accent'
+                                        : 'text-sidebar-foreground hover:bg-sidebar-accent/50'
+                                    }`}
+                                  >
+                                    {/* Active indicator */}
+                                    {isActive && (
+                                      <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-sidebar-primary" />
+                                    )}
+                                    <Icon className="w-5 h-5 shrink-0" />
+                                    <span className="flex-1">{item.label}</span>
+                                    {item.badge !== undefined && (
+                                      <span
+                                        className={`px-2 py-0.5 text-xs ${
+                                          isActive
+                                            ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                                            : 'bg-muted text-muted-foreground'
+                                        }`}
+                                      >
+                                        {item.badge}
+                                      </span>
+                                    )}
+                                  </div>
+                                </li>
+                              )
+                            })}
+                          </ul>
+                        </div>
+                      ))}
+                    </nav>
+                  )
+                })()}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Dashboard Layout Structure</p>
+              <div className="border border-border bg-card p-4">
+                <div className="flex gap-4">
+                  {/* Mini sidebar representation */}
+                  <div className="w-16 shrink-0">
+                    <div className="bg-sidebar border border-sidebar-border h-48 flex flex-col">
+                      <div className="h-10 border-b border-sidebar-border flex items-center justify-center">
+                        <div className="w-6 h-6 bg-primary" />
+                      </div>
+                      <div className="flex-1 py-2 space-y-1">
+                        <div className="h-8 mx-2 bg-sidebar-accent border-l-2 border-sidebar-primary" />
+                        <div className="h-8 mx-2 bg-transparent" />
+                        <div className="h-8 mx-2 bg-transparent" />
+                      </div>
+                    </div>
+                  </div>
+                  {/* Main content representation */}
+                  <div className="flex-1">
+                    <div className="bg-background border border-border h-48 flex flex-col">
+                      <div className="h-10 border-b border-border bg-card/50 flex items-center px-3">
+                        <div className="w-20 h-4 bg-muted" />
+                        <div className="flex-1" />
+                        <div className="w-6 h-6 bg-muted" />
+                      </div>
+                      <div className="flex-1 p-3 space-y-2">
+                        <div className="h-4 bg-muted w-1/3" />
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="h-16 bg-card border border-border" />
+                          <div className="h-16 bg-card border border-border" />
+                          <div className="h-16 bg-card border border-border" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-4">
+                  Fixed sidebar (256px / 72px collapsed) + Scrollable main content
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Usage</p>
+              <div className="p-4 bg-card border border-border font-mono text-xs space-y-2">
+                <p className="text-muted-foreground">{`// Import layout components`}</p>
+                <p>{`import { DashboardLayout, PageHeader } from '@/components/layout'`}</p>
+                <p className="text-muted-foreground mt-4">{`// Define navigation sections`}</p>
+                <p>{`const navSections = [{ title: 'Main', items: [...] }]`}</p>
+                <p className="text-muted-foreground mt-4">{`// Wrap your page content`}</p>
+                <p>{`<DashboardLayout sections={navSections}>`}</p>
+                <p className="pl-4">{`  <PageHeader title="Dashboard" />`}</p>
+                <p className="pl-4">{`  {/* Your content */}`}</p>
+                <p>{`</DashboardLayout>`}</p>
+              </div>
+            </div>
           </div>
         </Section>
 
@@ -674,7 +1048,7 @@ export default function StyleguidePage() {
       {/* Footer */}
       <footer className="border-t border-border mt-16">
         <div className="max-w-6xl mx-auto px-8 py-6">
-          <p className="text-xs text-muted-foreground">Minimal Data-Brutalism Design System — Xandeum pNodes Platform</p>
+          <p className="text-xs text-muted-foreground">Minimal Data-Brutalism Design System — Xnode Platform</p>
         </div>
       </footer>
     </div>

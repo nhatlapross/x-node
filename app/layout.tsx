@@ -16,8 +16,8 @@ const shareTechMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Xandeum pNodes",
-  description: "Xandeum pNodes Platform",
+  title: "Xnode",
+  description: "Xnode Analytics Platform",
 };
 
 export default function RootLayout({
