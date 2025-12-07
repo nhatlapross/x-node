@@ -289,7 +289,10 @@ export default function Home() {
 
   // Fetch detailed data for a single node with progressive loading
   const fetchNodeDataAndUpdate = useCallback(async (pod: NetworkPod, index: number) => {
+  // Fetch detailed data for a single node with progressive loading
+  const fetchNodeDataAndUpdate = useCallback(async (pod: NetworkPod, index: number) => {
     const ip = pod.address.split(":")[0];
+    const baseData: NodeData = {
     const baseData: NodeData = {
       ip,
       address: pod.address,
@@ -301,6 +304,8 @@ export default function Home() {
 
     // Phase 1: Fetch version and stats first (fastest, most important)
     const [versionRes, statsRes] = await Promise.all([
+    // Phase 1: Fetch version and stats first (fastest, most important)
+    const [versionRes, statsRes] = await Promise.all([
       callApi(ip, "get-version"),
       callApi(ip, "get-stats"),
     ]);
@@ -309,13 +314,23 @@ export default function Home() {
     if (versionRes.error && statsRes.error) {
       const offlineResult: NodeData = {
         ...baseData,
+    // If both failed, mark as offline immediately
+    if (versionRes.error && statsRes.error) {
+      const offlineResult: NodeData = {
+        ...baseData,
         status: "offline",
+        error: versionRes.error || statsRes.error,
         error: versionRes.error || statsRes.error,
       };
       setNodes(prev => prev.map(n => n.address === pod.address ? offlineResult : n));
       return offlineResult;
+      setNodes(prev => prev.map(n => n.address === pod.address ? offlineResult : n));
+      return offlineResult;
     }
 
+    // Update with partial data immediately (online with stats)
+    const partialResult: NodeData = {
+      ...baseData,
     // Update with partial data immediately (online with stats)
     const partialResult: NodeData = {
       ...baseData,
@@ -336,8 +351,21 @@ export default function Home() {
 
     setNodes(prev => prev.map(n => n.address === pod.address ? fullResult : n));
     return fullResult;
+    setNodes(prev => prev.map(n => n.address === pod.address ? partialResult : n));
+
+    // Phase 2: Fetch pods data (slower, less critical)
+    const podsRes = await callApi(ip, "get-pods");
+
+    const fullResult: NodeData = {
+      ...partialResult,
+      pods: podsRes.result as PodsResponse | undefined,
+    };
+
+    setNodes(prev => prev.map(n => n.address === pod.address ? fullResult : n));
+    return fullResult;
   }, []);
 
+  // Fetch all nodes with concurrency limit for better performance
   // Fetch all nodes with concurrency limit for better performance
   const fetchAllNodesData = useCallback(async () => {
     console.log('[fetchAllNodesData] Called with', registryPods.length, 'pods');
@@ -368,6 +396,7 @@ export default function Home() {
 
     setLastUpdate(new Date());
     setIsLoading(false);
+  }, [registryPods, fetchNodeDataAndUpdate]);
   }, [registryPods, fetchNodeDataAndUpdate]);
 
   // Handle network change
@@ -413,6 +442,19 @@ export default function Home() {
           0
         ) / onlineNodes.length
       : 0;
+
+  // Calculate sync stats
+  const maxSyncIndex = onlineNodes.length > 0
+    ? Math.max(...onlineNodes.map((n) => n.stats?.current_index || 0))
+    : 0;
+  const totalDataSynced = onlineNodes.reduce(
+    (acc, n) => acc + (n.stats?.total_bytes || 0),
+    0
+  );
+  const totalActiveStreams = onlineNodes.reduce(
+    (acc, n) => acc + (n.stats?.active_streams || 0),
+    0
+  );
 
   const selectedNodeData = selectedNode
     ? nodes.find((n) => n.address === selectedNode)
