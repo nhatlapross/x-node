@@ -36,6 +36,11 @@ interface NodeData {
   stats?: StatsResponse
   error?: string
   lastFetched?: number
+  location?: {
+    city: string
+    country: string
+    countryCode?: string
+  }
 }
 
 interface NodeCardProps {
@@ -62,6 +67,18 @@ export function NodeCard({ node, isSelected, onClick, formatBytes, formatUptime 
         <div>
           <h3 className="font-medium font-mono">{node.label}</h3>
           <p className="text-xs font-mono text-muted-foreground">{node.address}</p>
+          {node.location && (
+            <p className="text-xs font-mono text-muted-foreground/80 flex items-center gap-1.5 mt-0.5">
+              {node.location.countryCode && (
+                <img
+                  src={`https://flagsapi.com/${node.location.countryCode}/flat/16.png`}
+                  alt={node.location.country}
+                  className="w-4 h-3 object-cover"
+                />
+              )}
+              {node.location.city}, {node.location.country}
+            </p>
+          )}
           {node.pubkey && (
             <p className="text-xs font-mono text-muted-foreground/60 truncate max-w-[200px]" title={node.pubkey}>
               {node.pubkey}

@@ -72,10 +72,30 @@ interface NetworkConfig {
 }
 
 const NETWORK_RPC_ENDPOINTS: NetworkConfig[] = [
-  { id: "devnet1", name: "Devnet 1", rpcUrl: "https://rpc1.pchednode.com/rpc", type: "devnet" },
-  { id: "devnet2", name: "Devnet 2", rpcUrl: "https://rpc2.pchednode.com/rpc", type: "devnet" },
-  { id: "mainnet1", name: "Mainnet 1", rpcUrl: "https://rpc3.pchednode.com/rpc", type: "mainnet" },
-  { id: "mainnet2", name: "Mainnet 2", rpcUrl: "https://rpc4.pchednode.com/rpc", type: "mainnet" },
+  {
+    id: "devnet1",
+    name: "Devnet 1",
+    rpcUrl: "https://rpc1.pchednode.com/rpc",
+    type: "devnet",
+  },
+  {
+    id: "devnet2",
+    name: "Devnet 2",
+    rpcUrl: "https://rpc2.pchednode.com/rpc",
+    type: "devnet",
+  },
+  {
+    id: "mainnet1",
+    name: "Mainnet 1",
+    rpcUrl: "https://rpc3.pchednode.com/rpc",
+    type: "mainnet",
+  },
+  {
+    id: "mainnet2",
+    name: "Mainnet 2",
+    rpcUrl: "https://rpc4.pchednode.com/rpc",
+    type: "mainnet",
+  },
 ];
 
 interface NetworkPod {
@@ -118,7 +138,9 @@ export default function Home() {
 
   // Pods list from registry
   const [registryPods, setRegistryPods] = useState<NetworkPod[]>([]);
-  const [registryStatus, setRegistryStatus] = useState<"loading" | "success" | "error">("loading");
+  const [registryStatus, setRegistryStatus] = useState<
+    "loading" | "success" | "error"
+  >("loading");
   const [registryError, setRegistryError] = useState<string | null>(null);
 
   // Nodes data (fetched from individual pods)
@@ -129,7 +151,9 @@ export default function Home() {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
   // Get current network config
-  const currentNetwork = NETWORK_RPC_ENDPOINTS.find(n => n.id === selectedNetwork)!;
+  const currentNetwork = NETWORK_RPC_ENDPOINTS.find(
+    (n) => n.id === selectedNetwork
+  )!;
 
   const callApi = async (
     ip: string,
@@ -176,7 +200,7 @@ export default function Home() {
 
   // Fetch pods from selected network registry
   const fetchRegistryPods = useCallback(async (networkId: string) => {
-    const network = NETWORK_RPC_ENDPOINTS.find(n => n.id === networkId);
+    const network = NETWORK_RPC_ENDPOINTS.find((n) => n.id === networkId);
     if (!network) return;
 
     setRegistryStatus("loading");
@@ -195,7 +219,9 @@ export default function Home() {
 
     const data = res.result as NetworkPodsResponse;
     // Sort by last_seen_timestamp (most recent first)
-    const sortedPods = data.pods.sort((a, b) => b.last_seen_timestamp - a.last_seen_timestamp);
+    const sortedPods = data.pods.sort(
+      (a, b) => b.last_seen_timestamp - a.last_seen_timestamp
+    );
     setRegistryPods(sortedPods);
     setRegistryStatus("success");
 
@@ -212,55 +238,66 @@ export default function Home() {
   }, []);
 
   // Fetch detailed data for a single node with progressive loading
-  const fetchNodeDataAndUpdate = useCallback(async (pod: NetworkPod, index: number) => {
-    const ip = pod.address.split(":")[0];
-    const baseData: NodeData = {
-      ip,
-      address: pod.address,
-      label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${index + 1}`,
-      pubkey: pod.pubkey,
-      registryVersion: pod.version,
-      status: "loading",
-    };
-
-    // Phase 1: Fetch version and stats first (fastest, most important)
-    const [versionRes, statsRes] = await Promise.all([
-      callApi(ip, "get-version"),
-      callApi(ip, "get-stats"),
-    ]);
-
-    // If both failed, mark as offline immediately
-    if (versionRes.error && statsRes.error) {
-      const offlineResult: NodeData = {
-        ...baseData,
-        status: "offline",
-        error: versionRes.error || statsRes.error,
+  const fetchNodeDataAndUpdate = useCallback(
+    async (pod: NetworkPod, index: number) => {
+      const ip = pod.address.split(":")[0];
+      const baseData: NodeData = {
+        ip,
+        address: pod.address,
+        label: pod.pubkey
+          ? `${pod.pubkey.slice(0, 8)}...`
+          : `Node ${index + 1}`,
+        pubkey: pod.pubkey,
+        registryVersion: pod.version,
+        status: "loading",
       };
-      setNodes(prev => prev.map(n => n.address === pod.address ? offlineResult : n));
-      return offlineResult;
-    }
 
-    // Update with partial data immediately (online with stats)
-    const partialResult: NodeData = {
-      ...baseData,
-      status: "online",
-      version: versionRes.result as VersionResponse | undefined,
-      stats: statsRes.result as StatsResponse | undefined,
-      lastFetched: Date.now(),
-    };
-    setNodes(prev => prev.map(n => n.address === pod.address ? partialResult : n));
+      // Phase 1: Fetch version and stats first (fastest, most important)
+      const [versionRes, statsRes] = await Promise.all([
+        callApi(ip, "get-version"),
+        callApi(ip, "get-stats"),
+      ]);
 
-    // Phase 2: Fetch pods data (slower, less critical)
-    const podsRes = await callApi(ip, "get-pods");
+      // If both failed, mark as offline immediately
+      if (versionRes.error && statsRes.error) {
+        const offlineResult: NodeData = {
+          ...baseData,
+          status: "offline",
+          error: versionRes.error || statsRes.error,
+        };
+        setNodes((prev) =>
+          prev.map((n) => (n.address === pod.address ? offlineResult : n))
+        );
+        return offlineResult;
+      }
 
-    const fullResult: NodeData = {
-      ...partialResult,
-      pods: podsRes.result as PodsResponse | undefined,
-    };
+      // Update with partial data immediately (online with stats)
+      const partialResult: NodeData = {
+        ...baseData,
+        status: "online",
+        version: versionRes.result as VersionResponse | undefined,
+        stats: statsRes.result as StatsResponse | undefined,
+        lastFetched: Date.now(),
+      };
+      setNodes((prev) =>
+        prev.map((n) => (n.address === pod.address ? partialResult : n))
+      );
 
-    setNodes(prev => prev.map(n => n.address === pod.address ? fullResult : n));
-    return fullResult;
-  }, []);
+      // Phase 2: Fetch pods data (slower, less critical)
+      const podsRes = await callApi(ip, "get-pods");
+
+      const fullResult: NodeData = {
+        ...partialResult,
+        pods: podsRes.result as PodsResponse | undefined,
+      };
+
+      setNodes((prev) =>
+        prev.map((n) => (n.address === pod.address ? fullResult : n))
+      );
+      return fullResult;
+    },
+    []
+  );
 
   // Fetch all nodes with concurrency limit for better performance
   const fetchAllNodesData = useCallback(async () => {
@@ -290,10 +327,13 @@ export default function Home() {
   }, [registryPods, fetchNodeDataAndUpdate]);
 
   // Handle network change
-  const handleNetworkChange = useCallback((networkId: string) => {
-    setSelectedNetwork(networkId);
-    fetchRegistryPods(networkId);
-  }, [fetchRegistryPods]);
+  const handleNetworkChange = useCallback(
+    (networkId: string) => {
+      setSelectedNetwork(networkId);
+      fetchRegistryPods(networkId);
+    },
+    [fetchRegistryPods]
+  );
 
   // Initial fetch on mount
   useEffect(() => {
@@ -332,16 +372,16 @@ export default function Home() {
     onlineNodes.length > 0
       ? onlineNodes.reduce(
           (acc, n) =>
-            acc +
-            ((n.stats?.ram_used || 0) / (n.stats?.ram_total || 1)) * 100,
+            acc + ((n.stats?.ram_used || 0) / (n.stats?.ram_total || 1)) * 100,
           0
         ) / onlineNodes.length
       : 0;
 
   // Calculate sync stats
-  const maxSyncIndex = onlineNodes.length > 0
-    ? Math.max(...onlineNodes.map((n) => n.stats?.current_index || 0))
-    : 0;
+  const maxSyncIndex =
+    onlineNodes.length > 0
+      ? Math.max(...onlineNodes.map((n) => n.stats?.current_index || 0))
+      : 0;
   const totalDataSynced = onlineNodes.reduce(
     (acc, n) => acc + (n.stats?.total_bytes || 0),
     0
@@ -386,7 +426,9 @@ export default function Home() {
                 >
                   <span
                     className={`w-2 h-2 rounded-full ${
-                      network.type === "mainnet" ? "bg-green-400" : "bg-blue-400"
+                      network.type === "mainnet"
+                        ? "bg-green-400"
+                        : "bg-blue-400"
                     }`}
                   />
                   {network.name}
@@ -402,7 +444,9 @@ export default function Home() {
                   onChange={(e) => setAutoRefresh(e.target.checked)}
                   className="w-4 h-4 rounded"
                 />
-                <span className="text-sm text-zinc-400">Auto-refresh (30s)</span>
+                <span className="text-sm text-zinc-400">
+                  Auto-refresh (30s)
+                </span>
               </label>
               <button
                 onClick={() => fetchRegistryPods(selectedNetwork)}
@@ -412,7 +456,9 @@ export default function Home() {
                 {registryStatus === "loading"
                   ? "Loading pods..."
                   : isLoading
-                  ? `Loading ${nodes.filter(n => n.status !== "loading").length}/${nodes.length}...`
+                  ? `Loading ${
+                      nodes.filter((n) => n.status !== "loading").length
+                    }/${nodes.length}...`
                   : "Refresh All"}
               </button>
             </div>
@@ -429,7 +475,9 @@ export default function Home() {
         {/* Error State */}
         {registryStatus === "error" && (
           <div className="mb-8 p-6 bg-red-900/20 border border-red-800 rounded-lg text-center">
-            <div className="text-red-400 font-medium mb-2">Failed to load {currentNetwork.name}</div>
+            <div className="text-red-400 font-medium mb-2">
+              Failed to load {currentNetwork.name}
+            </div>
             <div className="text-zinc-400 text-sm">{registryError}</div>
             <button
               onClick={() => fetchRegistryPods(selectedNetwork)}
@@ -444,7 +492,9 @@ export default function Home() {
         {registryStatus === "loading" && (
           <div className="mb-8 p-12 text-center">
             <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
-            <div className="text-zinc-400">Loading pods from {currentNetwork.name}...</div>
+            <div className="text-zinc-400">
+              Loading pods from {currentNetwork.name}...
+            </div>
           </div>
         )}
 
@@ -464,7 +514,10 @@ export default function Home() {
                     <div
                       className="h-full bg-green-500 transition-all"
                       style={{
-                        width: nodes.length > 0 ? `${(onlineNodes.length / nodes.length) * 100}%` : "0%",
+                        width:
+                          nodes.length > 0
+                            ? `${(onlineNodes.length / nodes.length) * 100}%`
+                            : "0%",
                       }}
                     />
                   </div>
@@ -542,7 +595,9 @@ export default function Home() {
                 </div>
                 <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
                   <div className="text-3xl font-bold text-white">
-                    {onlineNodes.reduce((acc, n) => acc + (n.stats?.total_pages || 0), 0).toLocaleString()}
+                    {onlineNodes
+                      .reduce((acc, n) => acc + (n.stats?.total_pages || 0), 0)
+                      .toLocaleString()}
                   </div>
                   <div className="text-sm text-zinc-400">Total Pages</div>
                 </div>
@@ -552,20 +607,31 @@ export default function Home() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
                 <div className="bg-zinc-900 rounded-lg p-4 border border-green-800/50">
                   <div className="text-3xl font-bold text-green-400">
-                    {onlineNodes.reduce((acc, n) => acc + (n.stats?.packets_received || 0), 0).toLocaleString()}
+                    {onlineNodes
+                      .reduce(
+                        (acc, n) => acc + (n.stats?.packets_received || 0),
+                        0
+                      )
+                      .toLocaleString()}
                   </div>
                   <div className="text-sm text-zinc-400">Packets/s (In)</div>
                 </div>
                 <div className="bg-zinc-900 rounded-lg p-4 border border-blue-800/50">
                   <div className="text-3xl font-bold text-blue-400">
-                    {onlineNodes.reduce((acc, n) => acc + (n.stats?.packets_sent || 0), 0).toLocaleString()}
+                    {onlineNodes
+                      .reduce((acc, n) => acc + (n.stats?.packets_sent || 0), 0)
+                      .toLocaleString()}
                   </div>
                   <div className="text-sm text-zinc-400">Packets/s (Out)</div>
                 </div>
                 <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
                   <div className="text-3xl font-bold text-white">
                     {onlineNodes.length > 0
-                      ? formatUptime(Math.max(...onlineNodes.map((n) => n.stats?.uptime || 0)))
+                      ? formatUptime(
+                          Math.max(
+                            ...onlineNodes.map((n) => n.stats?.uptime || 0)
+                          )
+                        )
                       : "-"}
                   </div>
                   <div className="text-sm text-zinc-400">Max Uptime</div>
@@ -575,7 +641,10 @@ export default function Home() {
                     {onlineNodes.length > 0
                       ? formatUptime(
                           Math.round(
-                            onlineNodes.reduce((acc, n) => acc + (n.stats?.uptime || 0), 0) / onlineNodes.length
+                            onlineNodes.reduce(
+                              (acc, n) => acc + (n.stats?.uptime || 0),
+                              0
+                            ) / onlineNodes.length
                           )
                         )
                       : "-"}
@@ -589,7 +658,8 @@ export default function Home() {
             <section className="mb-8">
               <h2 className="text-lg font-semibold mb-4">Network Topology</h2>
               <p className="text-sm text-zinc-400 mb-4">
-                3D visualization of node connections. Drag to rotate, scroll to zoom, click node for details.
+                3D visualization of node connections. Drag to rotate, scroll to
+                zoom, click node for details.
               </p>
               <NetworkTopology3D
                 nodes={nodes}
@@ -599,13 +669,17 @@ export default function Home() {
 
             {/* Node Grid */}
             <section className="mb-8">
-              <h2 className="text-lg font-semibold mb-4">All Nodes ({nodes.length})</h2>
+              <h2 className="text-lg font-semibold mb-4">
+                All Nodes ({nodes.length})
+              </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {nodes.map((node) => (
                   <div
                     key={node.address}
                     onClick={() =>
-                      setSelectedNode(selectedNode === node.address ? null : node.address)
+                      setSelectedNode(
+                        selectedNode === node.address ? null : node.address
+                      )
                     }
                     className={`bg-zinc-900 rounded-lg p-4 border cursor-pointer transition-all hover:border-blue-600 ${
                       selectedNode === node.address
@@ -617,9 +691,14 @@ export default function Home() {
                     <div className="flex justify-between items-start mb-3">
                       <div>
                         <h3 className="font-medium text-white">{node.label}</h3>
-                        <p className="text-xs font-mono text-zinc-500">{node.address}</p>
+                        <p className="text-xs font-mono text-zinc-500">
+                          {node.address}
+                        </p>
                         {node.pubkey && (
-                          <p className="text-xs font-mono text-zinc-600 truncate max-w-[200px]" title={node.pubkey}>
+                          <p
+                            className="text-xs font-mono text-zinc-600 truncate max-w-[200px]"
+                            title={node.pubkey}
+                          >
                             {node.pubkey}
                           </p>
                         )}
@@ -656,7 +735,12 @@ export default function Home() {
                           <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                             <div
                               className="h-full bg-blue-500 transition-all"
-                              style={{ width: `${Math.min(node.stats.cpu_percent, 100)}%` }}
+                              style={{
+                                width: `${Math.min(
+                                  node.stats.cpu_percent,
+                                  100
+                                )}%`,
+                              }}
                             />
                           </div>
                         </div>
@@ -674,7 +758,10 @@ export default function Home() {
                             <div
                               className="h-full bg-purple-500 transition-all"
                               style={{
-                                width: `${(node.stats.ram_used / node.stats.ram_total) * 100}%`,
+                                width: `${
+                                  (node.stats.ram_used / node.stats.ram_total) *
+                                  100
+                                }%`,
                               }}
                             />
                           </div>
@@ -683,13 +770,17 @@ export default function Home() {
                         {/* Sync Info */}
                         <div className="mt-3 pt-3 border-t border-zinc-800">
                           <div className="flex justify-between items-center mb-2">
-                            <span className="text-xs text-zinc-500">Sync Index</span>
+                            <span className="text-xs text-zinc-500">
+                              Sync Index
+                            </span>
                             <span className="text-sm font-mono text-cyan-400">
                               #{node.stats.current_index}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span className="text-xs text-zinc-500">Data Synced</span>
+                            <span className="text-xs text-zinc-500">
+                              Data Synced
+                            </span>
                             <span className="text-sm text-zinc-300">
                               {formatBytes(node.stats.total_bytes)}
                             </span>
@@ -711,25 +802,33 @@ export default function Home() {
                             </div>
                           </div>
                           <div>
-                            <div className="text-xs text-zinc-500">Packets In</div>
+                            <div className="text-xs text-zinc-500">
+                              Packets In
+                            </div>
                             <div className="text-sm text-zinc-300">
                               {node.stats.packets_received.toLocaleString()}/s
                             </div>
                           </div>
                           <div>
-                            <div className="text-xs text-zinc-500">Packets Out</div>
+                            <div className="text-xs text-zinc-500">
+                              Packets Out
+                            </div>
                             <div className="text-sm text-zinc-300">
                               {node.stats.packets_sent.toLocaleString()}/s
                             </div>
                           </div>
                           <div>
-                            <div className="text-xs text-zinc-500">Active Streams</div>
+                            <div className="text-xs text-zinc-500">
+                              Active Streams
+                            </div>
                             <div className="text-sm text-zinc-300">
                               {node.stats.active_streams}
                             </div>
                           </div>
                           <div>
-                            <div className="text-xs text-zinc-500">Total Pages</div>
+                            <div className="text-xs text-zinc-500">
+                              Total Pages
+                            </div>
                             <div className="text-sm text-zinc-300">
                               {node.stats.total_pages.toLocaleString()}
                             </div>
@@ -739,7 +838,8 @@ export default function Home() {
                         {/* Last Updated */}
                         <div className="mt-2 pt-2 border-t border-zinc-800">
                           <div className="text-xs text-zinc-500">
-                            Last Updated: {formatTimestamp(node.stats.last_updated)}
+                            Last Updated:{" "}
+                            {formatTimestamp(node.stats.last_updated)}
                           </div>
                         </div>
                       </div>
@@ -856,7 +956,9 @@ export default function Home() {
                             Last Updated
                           </div>
                           <div className="text-lg font-bold text-white mt-1">
-                            {formatTimestamp(selectedNodeData.stats.last_updated)}
+                            {formatTimestamp(
+                              selectedNodeData.stats.last_updated
+                            )}
                           </div>
                         </div>
                         <div className="bg-zinc-900 p-4">
@@ -892,24 +994,41 @@ export default function Home() {
                         </h3>
                         <div className="flex gap-2 text-xs">
                           <span className="bg-green-500/20 text-green-400 px-2 py-1 rounded">
-                            v0.6.0: {selectedNodeData.pods.pods.filter(p => p.version === "0.6.0").length}
+                            v0.6.0:{" "}
+                            {
+                              selectedNodeData.pods.pods.filter(
+                                (p) => p.version === "0.6.0"
+                              ).length
+                            }
                           </span>
                           <span className="bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">
-                            v0.5.1: {selectedNodeData.pods.pods.filter(p => p.version === "0.5.1").length}
+                            v0.5.1:{" "}
+                            {
+                              selectedNodeData.pods.pods.filter(
+                                (p) => p.version === "0.5.1"
+                              ).length
+                            }
                           </span>
                         </div>
                       </div>
                       {selectedNodeData.pods.pods.length > 0 ? (
                         <div className="space-y-2 max-h-96 overflow-y-auto">
                           {selectedNodeData.pods.pods
-                            .sort((a, b) => b.last_seen_timestamp - a.last_seen_timestamp)
+                            .sort(
+                              (a, b) =>
+                                b.last_seen_timestamp - a.last_seen_timestamp
+                            )
                             .map((pod, idx) => {
-                              const isRecent = Date.now() / 1000 - pod.last_seen_timestamp < 300; // 5 minutes
+                              const isRecent =
+                                Date.now() / 1000 - pod.last_seen_timestamp <
+                                300; // 5 minutes
                               return (
                                 <div
                                   key={idx}
                                   className={`bg-zinc-800 rounded p-3 border-l-2 ${
-                                    isRecent ? "border-green-500" : "border-zinc-600"
+                                    isRecent
+                                      ? "border-green-500"
+                                      : "border-zinc-600"
                                   }`}
                                 >
                                   <div className="flex justify-between items-start">
@@ -917,7 +1036,9 @@ export default function Home() {
                                       <div className="flex items-center gap-2">
                                         <span
                                           className={`w-2 h-2 rounded-full ${
-                                            isRecent ? "bg-green-500" : "bg-zinc-500"
+                                            isRecent
+                                              ? "bg-green-500"
+                                              : "bg-zinc-500"
                                           }`}
                                         />
                                         <span className="font-mono text-sm text-white">
@@ -937,7 +1058,11 @@ export default function Home() {
                                         <div
                                           className="font-mono text-xs text-zinc-500 mt-1 truncate cursor-pointer hover:text-zinc-300"
                                           title={pod.pubkey}
-                                          onClick={() => navigator.clipboard.writeText(pod.pubkey || "")}
+                                          onClick={() =>
+                                            navigator.clipboard.writeText(
+                                              pod.pubkey || ""
+                                            )
+                                          }
                                         >
                                           {pod.pubkey}
                                         </div>
@@ -948,7 +1073,9 @@ export default function Home() {
                                         {isRecent ? "Active" : "Last seen"}
                                       </div>
                                       <div className="text-xs text-zinc-500">
-                                        {formatTimestamp(pod.last_seen_timestamp)}
+                                        {formatTimestamp(
+                                          pod.last_seen_timestamp
+                                        )}
                                       </div>
                                     </div>
                                   </div>
@@ -962,7 +1089,8 @@ export default function Home() {
                         </div>
                       )}
                       <div className="mt-3 text-xs text-zinc-500">
-                        Peers discovered via Gossip Protocol (port 9001). Green indicator = active within 5 minutes.
+                        Peers discovered via Gossip Protocol (port 9001). Green
+                        indicator = active within 5 minutes.
                       </div>
                     </div>
                   )}
@@ -990,24 +1118,52 @@ export default function Home() {
 
             {/* All Nodes Table */}
             <section>
-              <h2 className="text-lg font-semibold mb-4">Nodes Comparison Table</h2>
+              <h2 className="text-lg font-semibold mb-4">
+                Nodes Comparison Table
+              </h2>
               <div className="bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-zinc-800">
                     <tr>
-                      <th className="text-left p-3 font-medium text-zinc-400">#</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">Node</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">Status</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">Sync Index</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">Data Synced</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">Version</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">CPU</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">RAM</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">Storage</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">Packets In/Out</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">Streams</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">Uptime</th>
-                      <th className="text-left p-3 font-medium text-zinc-400">Last Updated</th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        #
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        Node
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        Status
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        Sync Index
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        Data Synced
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        Version
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        CPU
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        RAM
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        Storage
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        Packets In/Out
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        Streams
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        Uptime
+                      </th>
+                      <th className="text-left p-3 font-medium text-zinc-400">
+                        Last Updated
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800">
@@ -1018,17 +1174,24 @@ export default function Home() {
                           selectedNode === node.address ? "bg-blue-900/20" : ""
                         }`}
                         onClick={() =>
-                          setSelectedNode(selectedNode === node.address ? null : node.address)
+                          setSelectedNode(
+                            selectedNode === node.address ? null : node.address
+                          )
                         }
                       >
                         <td className="p-3 text-zinc-500">{idx + 1}</td>
                         <td className="p-3">
-                          <div className="font-medium text-white">{node.label}</div>
+                          <div className="font-medium text-white">
+                            {node.label}
+                          </div>
                           <div className="text-xs text-zinc-500 font-mono">
                             {node.address}
                           </div>
                           {node.pubkey && (
-                            <div className="text-xs text-zinc-600 font-mono truncate max-w-[150px]" title={node.pubkey}>
+                            <div
+                              className="text-xs text-zinc-600 font-mono truncate max-w-[150px]"
+                              title={node.pubkey}
+                            >
                               {node.pubkey}
                             </div>
                           )}
@@ -1057,11 +1220,15 @@ export default function Home() {
                         </td>
                         <td className="p-3">
                           <span className="font-mono text-cyan-400">
-                            {node.stats?.current_index !== undefined ? `#${node.stats.current_index}` : "-"}
+                            {node.stats?.current_index !== undefined
+                              ? `#${node.stats.current_index}`
+                              : "-"}
                           </span>
                         </td>
                         <td className="p-3 text-zinc-300">
-                          {node.stats ? formatBytes(node.stats.total_bytes) : "-"}
+                          {node.stats
+                            ? formatBytes(node.stats.total_bytes)
+                            : "-"}
                         </td>
                         <td className="p-3 text-zinc-300">
                           {node.version?.version || node.registryVersion || "-"}
@@ -1071,7 +1238,10 @@ export default function Home() {
                         </td>
                         <td className="p-3 text-zinc-300">
                           {node.stats
-                            ? `${((node.stats.ram_used / node.stats.ram_total) * 100).toFixed(1)}%`
+                            ? `${(
+                                (node.stats.ram_used / node.stats.ram_total) *
+                                100
+                              ).toFixed(1)}%`
                             : "-"}
                         </td>
                         <td className="p-3 text-zinc-300">
@@ -1080,11 +1250,17 @@ export default function Home() {
                         <td className="p-3 text-zinc-300 text-xs">
                           {node.stats ? (
                             <span>
-                              <span className="text-green-400">{node.stats.packets_received.toLocaleString()}</span>
+                              <span className="text-green-400">
+                                {node.stats.packets_received.toLocaleString()}
+                              </span>
                               {" / "}
-                              <span className="text-blue-400">{node.stats.packets_sent.toLocaleString()}</span>
+                              <span className="text-blue-400">
+                                {node.stats.packets_sent.toLocaleString()}
+                              </span>
                             </span>
-                          ) : "-"}
+                          ) : (
+                            "-"
+                          )}
                         </td>
                         <td className="p-3 text-zinc-300">
                           {node.stats?.active_streams ?? "-"}
@@ -1093,7 +1269,9 @@ export default function Home() {
                           {node.stats ? formatUptime(node.stats.uptime) : "-"}
                         </td>
                         <td className="p-3 text-zinc-400 text-xs">
-                          {node.stats ? formatTimestamp(node.stats.last_updated) : "-"}
+                          {node.stats
+                            ? formatTimestamp(node.stats.last_updated)
+                            : "-"}
                         </td>
                       </tr>
                     ))}
