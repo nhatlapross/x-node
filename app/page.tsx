@@ -9,6 +9,7 @@ import {
   Settings,
   RefreshCw,
   Globe,
+  Network,
 } from "lucide-react";
 import { DashboardLayout, PageHeader, ContentSection, type NavSection } from "@/components/layout";
 import { Logo, LogoIcon, DotDivider, BracketCard } from "@/components/common";
@@ -128,6 +129,7 @@ const navSections: NavSection[] = [
     title: "Network",
     items: [
       { label: "Nodes", href: "/nodes", icon: Server },
+      { label: "Topology", href: "/topology", icon: Network },
       { label: "Storage", href: "/storage", icon: Database },
     ],
   },
