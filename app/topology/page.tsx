@@ -376,6 +376,14 @@ export default function TopologyPage() {
           color: isOnline
             ? (isLatestVersion ? '#22c55e' : '#eab308')
             : '#ef4444',
+          // Additional data for detail panel
+          version: node.version?.version,
+          cpu: node.stats?.cpu_percent,
+          ram: node.stats ? (node.stats.ram_used / node.stats.ram_total) * 100 : undefined,
+          storage: node.stats?.file_size,
+          uptime: node.stats?.uptime,
+          peers: node.pods?.total_count,
+          pubkey: node.pubkey,
         };
       })
       .filter((node): node is GlobeNode => node !== null);

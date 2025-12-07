@@ -10,6 +10,9 @@ import {
   RefreshCw,
   Globe,
   Network,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { DashboardLayout, PageHeader, ContentSection, type NavSection } from "@/components/layout";
 import { Logo, LogoIcon, DotDivider, BracketCard } from "@/components/common";
@@ -166,6 +169,11 @@ export default function Home() {
   const [statusFilter, setStatusFilter] = useState<"all" | "online" | "offline">("all");
   const [versionFilter, setVersionFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Sort state
+  type SortColumn = "label" | "location" | "status" | "version" | "cpu" | "ram" | "storage" | "uptime" | "streams";
+  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   // Geolocation data
   const [geolocations, setGeolocations] = useState<Map<string, { lat: number; lng: number; city: string; country: string; countryCode: string; region: string }>>(new Map());
@@ -486,28 +494,87 @@ export default function Home() {
     nodes.map(n => n.version?.version || n.registryVersion).filter(Boolean)
   )).sort();
 
-  // Filter nodes based on current filters
-  const filteredNodes = nodes.filter(node => {
-    // Status filter
-    if (statusFilter !== "all" && node.status !== statusFilter) return false;
-
-    // Version filter
-    if (versionFilter !== "all") {
-      const nodeVersion = node.version?.version || node.registryVersion;
-      if (nodeVersion !== versionFilter) return false;
+  // Handle sort toggle
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      // Toggle direction
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      // New column, default to ascending
+      setSortColumn(column);
+      setSortDirection("asc");
     }
+  };
 
-    // Search filter (search in label, address, pubkey)
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      const matchLabel = node.label.toLowerCase().includes(query);
-      const matchAddress = node.address.toLowerCase().includes(query);
-      const matchPubkey = node.pubkey?.toLowerCase().includes(query);
-      if (!matchLabel && !matchAddress && !matchPubkey) return false;
+  // Sort icon component
+  const SortIcon = ({ column }: { column: SortColumn }) => {
+    if (sortColumn !== column) {
+      return <ArrowUpDown className="w-3 h-3 opacity-30" />;
     }
+    return sortDirection === "asc" ? (
+      <ArrowUp className="w-3 h-3" />
+    ) : (
+      <ArrowDown className="w-3 h-3" />
+    );
+  };
 
-    return true;
-  });
+  // Filter and sort nodes
+  const filteredAndSortedNodes = nodes
+    .filter(node => {
+      // Status filter
+      if (statusFilter !== "all" && node.status !== statusFilter) return false;
+
+      // Version filter
+      if (versionFilter !== "all") {
+        const nodeVersion = node.version?.version || node.registryVersion;
+        if (nodeVersion !== versionFilter) return false;
+      }
+
+      // Search filter (search in label, address, pubkey)
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const matchLabel = node.label.toLowerCase().includes(query);
+        const matchAddress = node.address.toLowerCase().includes(query);
+        const matchPubkey = node.pubkey?.toLowerCase().includes(query);
+        if (!matchLabel && !matchAddress && !matchPubkey) return false;
+      }
+
+      return true;
+    })
+    .sort((a, b) => {
+      if (!sortColumn) return 0;
+
+      const direction = sortDirection === "asc" ? 1 : -1;
+
+      switch (sortColumn) {
+        case "label":
+          return direction * a.label.localeCompare(b.label);
+        case "location":
+          const aLoc = a.location?.city || "";
+          const bLoc = b.location?.city || "";
+          return direction * aLoc.localeCompare(bLoc);
+        case "status":
+          return direction * a.status.localeCompare(b.status);
+        case "version":
+          const aVer = a.version?.version || a.registryVersion || "";
+          const bVer = b.version?.version || b.registryVersion || "";
+          return direction * aVer.localeCompare(bVer);
+        case "cpu":
+          return direction * ((a.stats?.cpu_percent || 0) - (b.stats?.cpu_percent || 0));
+        case "ram":
+          const aRam = a.stats ? (a.stats.ram_used / a.stats.ram_total) * 100 : 0;
+          const bRam = b.stats ? (b.stats.ram_used / b.stats.ram_total) * 100 : 0;
+          return direction * (aRam - bRam);
+        case "storage":
+          return direction * ((a.stats?.file_size || 0) - (b.stats?.file_size || 0));
+        case "uptime":
+          return direction * ((a.stats?.uptime || 0) - (b.stats?.uptime || 0));
+        case "streams":
+          return direction * ((a.stats?.active_streams || 0) - (b.stats?.active_streams || 0));
+        default:
+          return 0;
+      }
+    });
 
   // Network selector component
   const NetworkSelector = () => (
@@ -697,17 +764,22 @@ export default function Home() {
 
           {/* Results Count */}
           <p className="text-sm text-muted-foreground mb-4 font-mono">
-            Showing {filteredNodes.length} of {nodes.length} nodes
+            Showing {filteredAndSortedNodes.length} of {nodes.length} nodes
+            {sortColumn && (
+              <span className="ml-2 text-primary">
+                (sorted by {sortColumn} {sortDirection === "asc" ? "↑" : "↓"})
+              </span>
+            )}
           </p>
 
           {/* Card View */}
           {viewMode === "card" && (
             <Stagger
-              key={`${statusFilter}-${versionFilter}-${searchQuery}`}
+              key={`${statusFilter}-${versionFilter}-${searchQuery}-${sortColumn}-${sortDirection}`}
               animateOnMount
               className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
             >
-              {filteredNodes.map((node) => (
+              {filteredAndSortedNodes.map((node) => (
                 <StaggerItem key={node.address}>
                   <ScaleOnHover scale={1.01}>
                     <NodeCard
@@ -730,19 +802,91 @@ export default function Home() {
                 <thead className="bg-muted/50">
                   <tr>
                     <th className="text-left p-3 font-medium text-muted-foreground">#</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">Node</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">Location</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">Status</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">Version</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">CPU</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">RAM</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">Storage</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">Uptime</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">Streams</th>
+                    <th
+                      className="text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors select-none"
+                      onClick={() => handleSort("label")}
+                    >
+                      <div className="flex items-center gap-1">
+                        Node
+                        <SortIcon column="label" />
+                      </div>
+                    </th>
+                    <th
+                      className="text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors select-none"
+                      onClick={() => handleSort("location")}
+                    >
+                      <div className="flex items-center gap-1">
+                        Location
+                        <SortIcon column="location" />
+                      </div>
+                    </th>
+                    <th
+                      className="text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors select-none"
+                      onClick={() => handleSort("status")}
+                    >
+                      <div className="flex items-center gap-1">
+                        Status
+                        <SortIcon column="status" />
+                      </div>
+                    </th>
+                    <th
+                      className="text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors select-none"
+                      onClick={() => handleSort("version")}
+                    >
+                      <div className="flex items-center gap-1">
+                        Version
+                        <SortIcon column="version" />
+                      </div>
+                    </th>
+                    <th
+                      className="text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors select-none"
+                      onClick={() => handleSort("cpu")}
+                    >
+                      <div className="flex items-center gap-1">
+                        CPU
+                        <SortIcon column="cpu" />
+                      </div>
+                    </th>
+                    <th
+                      className="text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors select-none"
+                      onClick={() => handleSort("ram")}
+                    >
+                      <div className="flex items-center gap-1">
+                        RAM
+                        <SortIcon column="ram" />
+                      </div>
+                    </th>
+                    <th
+                      className="text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors select-none"
+                      onClick={() => handleSort("storage")}
+                    >
+                      <div className="flex items-center gap-1">
+                        Storage
+                        <SortIcon column="storage" />
+                      </div>
+                    </th>
+                    <th
+                      className="text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors select-none"
+                      onClick={() => handleSort("uptime")}
+                    >
+                      <div className="flex items-center gap-1">
+                        Uptime
+                        <SortIcon column="uptime" />
+                      </div>
+                    </th>
+                    <th
+                      className="text-left p-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors select-none"
+                      onClick={() => handleSort("streams")}
+                    >
+                      <div className="flex items-center gap-1">
+                        Streams
+                        <SortIcon column="streams" />
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filteredNodes.map((node, idx) => (
+                  {filteredAndSortedNodes.map((node, idx) => (
                     <tr
                       key={node.address}
                       className={cn(
