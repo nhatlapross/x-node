@@ -477,6 +477,7 @@ export default function Home() {
       sections={navSections}
       logo={<Logo height={36} />}
       logoCollapsed={<LogoIcon size={36} />}
+      loading={isLoading || registryStatus === "loading"}
       headerRight={
         <Button
           variant="outline"
