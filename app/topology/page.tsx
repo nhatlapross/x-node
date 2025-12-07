@@ -17,15 +17,18 @@ import { FadeIn } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
+import { useMemo } from "react";
+import { getGeolocation, batchGeolocate } from "@/lib/geolocation";
+import type { GlobeNode, GlobeConnection } from "@/components/globe";
 
 // Dynamic import to avoid SSR issues
-const NetworkTopology3D = dynamic(
-  () => import("@/components/visualization/NetworkTopology3D").then(mod => ({ default: mod.NetworkTopology3D })),
+const GlobeVisualization = dynamic(
+  () => import("@/components/globe").then(mod => ({ default: mod.GlobeVisualization })),
   {
     ssr: false,
     loading: () => (
       <div className="w-full h-[600px] flex items-center justify-center bg-card border border-border">
-        <div className="text-muted-foreground font-mono">Loading 3D Topology...</div>
+        <div className="text-muted-foreground font-mono">Loading Globe...</div>
       </div>
     ),
   }
@@ -135,8 +138,25 @@ export default function TopologyPage() {
   const [nodes, setNodes] = useState<NodeData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [isDark, setIsDark] = useState(false);
 
   const currentNetwork = NETWORK_RPC_ENDPOINTS.find(n => n.id === selectedNetwork)!;
+
+  // Detect theme
+  useEffect(() => {
+    const checkTheme = () => {
+      setIsDark(document.documentElement.classList.contains('dark'));
+    };
+    checkTheme();
+
+    const observer = new MutationObserver(checkTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+
+    return () => observer.disconnect();
+  }, []);
 
   const callApi = async (
     ip: string,
@@ -237,34 +257,23 @@ export default function TopologyPage() {
       status: "loading",
     };
 
-    const [versionRes, statsRes] = await Promise.all([
+    const [versionRes, statsRes, podsRes] = await Promise.all([
       callApi(ip, "get-version"),
       callApi(ip, "get-stats"),
+      callApi(ip, "get-pods"), // Fetch pods even if node might be offline
     ]);
 
-    if (versionRes.error && statsRes.error) {
-      const offlineResult: NodeData = {
-        ...baseData,
-        status: "offline",
-        error: versionRes.error || statsRes.error,
-      };
-      setNodes(prev => prev.map(n => n.address === pod.address ? offlineResult : n));
-      return offlineResult;
-    }
+    // Determine if node is offline (both version and stats failed)
+    const isOffline = versionRes.error && statsRes.error;
 
-    const partialResult: NodeData = {
+    const fullResult: NodeData = {
       ...baseData,
-      status: "online",
+      status: isOffline ? "offline" : "online",
       version: versionRes.result as VersionResponse | undefined,
       stats: statsRes.result as StatsResponse | undefined,
+      pods: podsRes.result as PodsResponse | undefined, // Include pods even for offline nodes
+      error: isOffline ? (versionRes.error || statsRes.error) : undefined,
       lastFetched: Date.now(),
-    };
-    setNodes(prev => prev.map(n => n.address === pod.address ? partialResult : n));
-
-    const podsRes = await callApi(ip, "get-pods");
-    const fullResult: NodeData = {
-      ...partialResult,
-      pods: podsRes.result as PodsResponse | undefined,
     };
 
     setNodes(prev => prev.map(n => n.address === pod.address ? fullResult : n));
@@ -313,6 +322,169 @@ export default function TopologyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registryStatus, registryPods.length]);
 
+  // Store geolocation data
+  const [geolocations, setGeolocations] = useState<Map<string, { lat: number; lng: number; city: string; country: string; region: string }>>(new Map());
+  const [geoLoading, setGeoLoading] = useState(false);
+
+  // Fetch geolocation data when nodes change
+  useEffect(() => {
+    const loadedNodes = nodes.filter(n => n.status !== 'loading');
+    if (loadedNodes.length === 0) return;
+
+    const ipAddresses = loadedNodes.map(n => n.address.split(':')[0]);
+
+    setGeoLoading(true);
+    console.log(`Fetching geolocation for ${ipAddresses.length} IPs...`);
+
+    batchGeolocate(ipAddresses).then(results => {
+      setGeolocations(results);
+      setGeoLoading(false);
+      console.log(`Geolocation complete! ${results.size} locations fetched.`);
+    }).catch(error => {
+      console.error('Geolocation error:', error);
+      setGeoLoading(false);
+    });
+  }, [nodes]);
+
+  // Convert nodes to globe format with geolocation
+  const { globeNodes, globeConnections } = useMemo(() => {
+    const loadedNodes = nodes.filter(n => n.status !== 'loading');
+
+    // Wait for geolocation data
+    if (geolocations.size === 0) {
+      return { globeNodes: [], globeConnections: [] };
+    }
+
+    const globeNodes: GlobeNode[] = loadedNodes
+      .map((node) => {
+        const ip = node.address.split(':')[0];
+        const geo = geolocations.get(ip);
+
+        // Skip if geolocation not available yet
+        if (!geo) return null;
+
+        const isOnline = node.status === 'online';
+        const isLatestVersion = node.version?.version === '0.6.0';
+
+        return {
+          id: node.address,
+          lat: geo.lat,
+          lng: geo.lng,
+          label: node.pubkey ? `${node.pubkey.slice(0, 8)}...` : ip,
+          status: node.status,
+          size: Math.max(1, Math.min(2, (node.pods?.total_count || 0) / 10 + 1)),
+          color: isOnline
+            ? (isLatestVersion ? '#22c55e' : '#eab308')
+            : '#ef4444',
+        };
+      })
+      .filter((node): node is GlobeNode => node !== null);
+
+    const globeConnections: GlobeConnection[] = [];
+    const connectionSet = new Set<string>();
+
+    // Create IP to node mapping for faster lookups
+    const ipToNodes = new Map<string, typeof loadedNodes[0]>();
+    loadedNodes.forEach(node => {
+      const ip = node.address.split(':')[0];
+      ipToNodes.set(ip, node);
+    });
+
+    console.log(`Building connections for ${loadedNodes.length} nodes...`);
+    console.log(`Available geolocations: ${geolocations.size}`);
+
+    // Debug: Check if nodes have pods data
+    loadedNodes.forEach((node, idx) => {
+      console.log(`Node ${idx}: ${node.label}`, {
+        hasPods: !!node.pods,
+        podsCount: node.pods?.total_count,
+        podsArray: node.pods?.pods?.length,
+        status: node.status
+      });
+    });
+
+    let connectionCount = 0;
+    let skippedNoGeo = 0;
+    let skippedNoMatch = 0;
+
+    loadedNodes.forEach((node) => {
+      // Check if node has pods
+      if (!node.pods) {
+        console.log(`Node ${node.label} has NO pods object`);
+        return;
+      }
+
+      if (!node.pods.pods || node.pods.pods.length === 0) {
+        console.log(`Node ${node.label} has empty pods array (total_count: ${node.pods.total_count})`);
+        return;
+      }
+
+      const sourceIp = node.address.split(':')[0];
+      const sourceGeo = geolocations.get(sourceIp);
+
+      if (!sourceGeo) {
+        skippedNoGeo++;
+        return;
+      }
+
+      console.log(`Node ${node.label} (${sourceIp}) has ${node.pods.pods.length} peers`);
+
+      node.pods.pods.forEach((pod) => {
+        const targetIp = pod.address.split(':')[0];
+        const targetNode = ipToNodes.get(targetIp);
+        const targetGeo = geolocations.get(targetIp);
+
+        if (!targetNode) {
+          console.log(`  → Peer ${targetIp} not found in node list`);
+          skippedNoMatch++;
+          return;
+        }
+
+        if (!targetGeo) {
+          console.log(`  → Peer ${targetIp} has no geolocation`);
+          skippedNoGeo++;
+          return;
+        }
+
+        if (targetNode.address !== node.address) {
+          const connectionId = [node.address, targetNode.address].sort().join('-');
+
+          if (!connectionSet.has(connectionId)) {
+            connectionSet.add(connectionId);
+            connectionCount++;
+            console.log(`  ✓ Connection: ${node.label} ↔ ${targetNode.pubkey?.slice(0,8) || targetIp}`);
+
+            const isActive = Date.now() / 1000 - pod.last_seen_timestamp < 300;
+            const targetPods = targetNode.pods?.pods || [];
+            const isBidirectional = targetPods.some(
+              p => p.address.split(':')[0] === sourceIp
+            );
+
+            globeConnections.push({
+              startLat: sourceGeo.lat,
+              startLng: sourceGeo.lng,
+              endLat: targetGeo.lat,
+              endLng: targetGeo.lng,
+              color: isBidirectional
+                ? (isActive ? '#00ffff' : '#0099ff')
+                : (isActive ? '#ffdd00' : '#888888'),
+            });
+          }
+        }
+      });
+    });
+
+    console.log(`\n=== Connection Summary ===`);
+    console.log(`Total nodes: ${loadedNodes.length}`);
+    console.log(`Nodes with geolocation: ${geolocations.size}`);
+    console.log(`Connections created: ${connectionCount}`);
+    console.log(`Skipped (no geo): ${skippedNoGeo}`);
+    console.log(`Skipped (peer not in list): ${skippedNoMatch}`);
+    console.log(`=========================\n`);
+
+    return { globeNodes, globeConnections };
+  }, [nodes, geolocations]);
+
   const NetworkSelector = () => (
     <div className="flex flex-wrap items-center gap-2">
       {NETWORK_RPC_ENDPOINTS.map((network) => (
@@ -343,6 +515,7 @@ export default function TopologyPage() {
       sections={navSections}
       logo={<Logo height={36} />}
       logoCollapsed={<LogoIcon size={36} />}
+      loading={isLoading || registryStatus === "loading"}
       headerRight={
         <Button
           variant="outline"
@@ -401,8 +574,18 @@ export default function TopologyPage() {
 
       {registryStatus === "success" && (
         <FadeIn animateOnMount>
-          <div className="border border-border bg-card overflow-hidden" style={{ height: '600px' }}>
-            <NetworkTopology3D nodes={nodes} />
+          <div className="border border-border bg-card overflow-hidden relative" style={{ height: 'calc(100vh - 200px)', minHeight: '700px' }}>
+            {geoLoading && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-primary/90 backdrop-blur text-primary-foreground px-4 py-2 rounded-lg text-xs font-mono flex items-center gap-2">
+                <div className="w-3 h-3 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
+                Fetching real geolocation data...
+              </div>
+            )}
+            <GlobeVisualization
+              nodes={globeNodes}
+              connections={globeConnections}
+              isDark={isDark}
+            />
           </div>
         </FadeIn>
       )}

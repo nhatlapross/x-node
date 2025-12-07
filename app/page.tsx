@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { batchGeolocate } from "@/lib/geolocation";
 
 // Types based on pRPC API documentation
 interface VersionResponse {
@@ -65,6 +66,11 @@ interface NodeData {
   pods?: PodsResponse;
   error?: string;
   lastFetched?: number;
+  location?: {
+    city: string;
+    country: string;
+    countryCode?: string;
+  };
 }
 
 // Network RPC endpoints for fetching pods
@@ -161,10 +167,43 @@ export default function Home() {
   const [versionFilter, setVersionFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Geolocation data
+  const [geolocations, setGeolocations] = useState<Map<string, { lat: number; lng: number; city: string; country: string; countryCode: string; region: string }>>(new Map());
+
   // Debug: log state changes
   useEffect(() => {
     console.log('[State] registryStatus:', registryStatus, 'registryPods:', registryPods.length, 'nodes:', nodes.length);
   }, [registryStatus, registryPods.length, nodes.length]);
+
+  // Fetch geolocation data when nodes change
+  useEffect(() => {
+    const loadedNodes = nodes.filter(n => n.status !== 'loading');
+    if (loadedNodes.length === 0) return;
+
+    const ipAddresses = loadedNodes.map(n => n.address.split(':')[0]);
+
+    batchGeolocate(ipAddresses).then(results => {
+      setGeolocations(results);
+
+      // Update nodes with location data
+      setNodes(prev => prev.map(node => {
+        const ip = node.address.split(':')[0];
+        const geo = results.get(ip);
+
+        if (geo && !node.location) {
+          return {
+            ...node,
+            location: {
+              city: geo.city,
+              country: geo.country,
+              countryCode: geo.countryCode,
+            }
+          };
+        }
+        return node;
+      }));
+    });
+  }, [nodes.length, nodes.filter(n => n.status !== 'loading').length]);
 
   // Get current network config
   const currentNetwork = NETWORK_RPC_ENDPOINTS.find(n => n.id === selectedNetwork)!;
@@ -692,6 +731,7 @@ export default function Home() {
                   <tr>
                     <th className="text-left p-3 font-medium text-muted-foreground">#</th>
                     <th className="text-left p-3 font-medium text-muted-foreground">Node</th>
+                    <th className="text-left p-3 font-medium text-muted-foreground">Location</th>
                     <th className="text-left p-3 font-medium text-muted-foreground">Status</th>
                     <th className="text-left p-3 font-medium text-muted-foreground">Version</th>
                     <th className="text-left p-3 font-medium text-muted-foreground">CPU</th>
@@ -717,6 +757,22 @@ export default function Home() {
                       <td className="p-3">
                         <div className="font-medium font-mono">{node.label}</div>
                         <div className="text-xs text-muted-foreground font-mono">{node.address}</div>
+                      </td>
+                      <td className="p-3">
+                        {node.location ? (
+                          <div className="flex items-center gap-2 font-mono text-xs">
+                            {node.location.countryCode && (
+                              <img
+                                src={`https://flagsapi.com/${node.location.countryCode}/flat/16.png`}
+                                alt={node.location.country}
+                                className="w-4 h-3 object-cover"
+                              />
+                            )}
+                            <span>{node.location.city}</span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
                       </td>
                       <td className="p-3">
                         <Badge

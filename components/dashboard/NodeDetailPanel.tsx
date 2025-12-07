@@ -197,24 +197,6 @@ export function NodeDetailPanel({
                   )}
                 </div>
               )}
-
-              {/* Raw JSON */}
-              <details className="border-t border-border">
-                <summary className="p-4 cursor-pointer text-sm text-muted-foreground hover:text-foreground">
-                  View Raw JSON Response
-                </summary>
-                <pre className="p-4 pt-0 text-xs text-muted-foreground overflow-x-auto font-mono">
-                  {JSON.stringify(
-                    {
-                      version: node.version,
-                      stats: node.stats,
-                      pods: node.pods,
-                    },
-                    null,
-                    2
-                  )}
-                </pre>
-              </details>
             </BracketCard>
           </div>
         </motion.div>
