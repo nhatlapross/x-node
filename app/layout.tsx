@@ -16,8 +16,51 @@ const shareTechMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Xnode",
-  description: "Xnode Analytics Platform",
+  title: "Xnode - Xandeum pNode Analytics Platform",
+  description: "Real-time analytics and monitoring platform for Xandeum pNodes. Track network topology, node performance, uptime, and geographic distribution.",
+  keywords: ["Xandeum", "pNode", "analytics", "blockchain", "storage", "monitoring", "dashboard"],
+  authors: [{ name: "Xnode Team" }],
+  creator: "Xnode",
+  publisher: "Xnode",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'),
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: "/",
+    title: "Xnode - Xandeum pNode Analytics Platform",
+    description: "Real-time analytics and monitoring platform for Xandeum pNodes. Track network topology, node performance, uptime, and geographic distribution.",
+    siteName: "Xnode",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "Xnode Analytics Platform",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Xnode - Xandeum pNode Analytics Platform",
+    description: "Real-time analytics and monitoring platform for Xandeum pNodes. Track network topology, node performance, uptime, and geographic distribution.",
+    images: ["/og-image.png"],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  icons: {
+    icon: "/logo-light.svg",
+    shortcut: "/logo-light.svg",
+    apple: "/logo-light.svg",
+  },
 };
 
 export default function RootLayout({
