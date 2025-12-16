@@ -1,4 +1,6 @@
-// Geolocation utility for IP addresses
+// Geolocation utility for IP addresses with persistent caching
+
+import { getFromCache, setToCache, CACHE_TTL, cacheKeys } from './cache'
 
 export interface GeoLocation {
   lat: number
@@ -9,8 +11,9 @@ export interface GeoLocation {
   region: string
 }
 
-// Cache for geolocation results to avoid redundant API calls
-const geoCache = new Map<string, GeoLocation>()
+// In-memory cache (populated from localStorage on first access)
+let geoCache: Map<string, GeoLocation> | null = null
+let cacheInitialized = false
 
 // Mock data as fallback
 const mockLocations: GeoLocation[] = [
@@ -30,6 +33,40 @@ const mockLocations: GeoLocation[] = [
   { lat: 28.6139, lng: 77.2090, city: 'New Delhi', country: 'India', countryCode: 'IN', region: 'Asia' },
   { lat: 41.9028, lng: 12.4964, city: 'Rome', country: 'Italy', countryCode: 'IT', region: 'Europe' },
 ]
+
+/**
+ * Initialize cache from localStorage
+ */
+function initCache(): Map<string, GeoLocation> {
+  if (geoCache && cacheInitialized) return geoCache
+
+  geoCache = new Map<string, GeoLocation>()
+
+  // Try to load from localStorage
+  const cached = getFromCache<Record<string, GeoLocation>>(cacheKeys.geolocations())
+  if (cached) {
+    Object.entries(cached).forEach(([ip, location]) => {
+      geoCache!.set(ip, location)
+    })
+  }
+
+  cacheInitialized = true
+  return geoCache
+}
+
+/**
+ * Save cache to localStorage
+ */
+function saveCache(): void {
+  if (!geoCache) return
+
+  const cacheObject: Record<string, GeoLocation> = {}
+  geoCache.forEach((location, ip) => {
+    cacheObject[ip] = location
+  })
+
+  setToCache(cacheKeys.geolocations(), cacheObject, CACHE_TTL.GEOLOCATION)
+}
 
 function hashCode(str: string): number {
   let hash = 0
@@ -64,9 +101,11 @@ function getMockGeolocation(ipAddress: string): GeoLocation {
  * Falls back to mock data if API fails
  */
 export async function getGeolocation(ipAddress: string): Promise<GeoLocation> {
+  const cache = initCache()
+
   // Check cache first
-  if (geoCache.has(ipAddress)) {
-    return geoCache.get(ipAddress)!
+  if (cache.has(ipAddress)) {
+    return cache.get(ipAddress)!
   }
 
   try {
@@ -82,7 +121,7 @@ export async function getGeolocation(ipAddress: string): Promise<GeoLocation> {
     if (data.status === 'fail') {
       console.warn(`Geolocation failed for ${ipAddress}, using mock data`)
       const mockLocation = getMockGeolocation(ipAddress)
-      geoCache.set(ipAddress, mockLocation)
+      cache.set(ipAddress, mockLocation)
       return mockLocation
     }
 
@@ -96,29 +135,47 @@ export async function getGeolocation(ipAddress: string): Promise<GeoLocation> {
     }
 
     // Cache the result
-    geoCache.set(ipAddress, location)
+    cache.set(ipAddress, location)
     return location
 
   } catch (error) {
     console.warn(`Geolocation error for ${ipAddress}:`, error, '- using mock data')
     const mockLocation = getMockGeolocation(ipAddress)
-    geoCache.set(ipAddress, mockLocation)
+    cache.set(ipAddress, mockLocation)
     return mockLocation
   }
 }
 
 /**
  * Batch geocode multiple IP addresses with rate limiting
+ * Optimized: skips already cached IPs, saves to localStorage after completion
  */
 export async function batchGeolocate(ipAddresses: string[]): Promise<Map<string, GeoLocation>> {
+  const cache = initCache()
   const results = new Map<string, GeoLocation>()
 
-  // Process in batches to respect rate limits (45/min for ip-api.com)
-  const BATCH_SIZE = 10
-  const DELAY_MS = 1500 // Delay between batches
+  // Separate cached and uncached IPs
+  const uncachedIps: string[] = []
 
-  for (let i = 0; i < ipAddresses.length; i += BATCH_SIZE) {
-    const batch = ipAddresses.slice(i, i + BATCH_SIZE)
+  ipAddresses.forEach(ip => {
+    if (cache.has(ip)) {
+      results.set(ip, cache.get(ip)!)
+    } else {
+      uncachedIps.push(ip)
+    }
+  })
+
+  // If all IPs are cached, return immediately
+  if (uncachedIps.length === 0) {
+    return results
+  }
+
+  // Process uncached IPs in batches (45/min for ip-api.com)
+  const BATCH_SIZE = 15  // Increased from 10 for faster loading
+  const DELAY_MS = 1000  // Reduced from 1500ms
+
+  for (let i = 0; i < uncachedIps.length; i += BATCH_SIZE) {
+    const batch = uncachedIps.slice(i, i + BATCH_SIZE)
 
     // Process batch in parallel
     const batchResults = await Promise.all(
@@ -134,10 +191,13 @@ export async function batchGeolocate(ipAddresses: string[]): Promise<Map<string,
     })
 
     // Wait before next batch (except for last batch)
-    if (i + BATCH_SIZE < ipAddresses.length) {
+    if (i + BATCH_SIZE < uncachedIps.length) {
       await new Promise(resolve => setTimeout(resolve, DELAY_MS))
     }
   }
+
+  // Save updated cache to localStorage
+  saveCache()
 
   return results
 }
@@ -162,5 +222,13 @@ function getRegionFromContinent(code: string): string {
  * Clear the geolocation cache (useful for testing)
  */
 export function clearGeoCache() {
-  geoCache.clear()
+  geoCache?.clear()
+  cacheInitialized = false
+}
+
+/**
+ * Get current cache size (for debugging)
+ */
+export function getGeoCacheSize(): number {
+  return initCache().size
 }

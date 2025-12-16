@@ -3,7 +3,7 @@
 import styled from '@emotion/styled'
 import { cn } from '@/lib/utils'
 
-interface BracketCardProps {
+interface BracketCardProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode
   className?: string
   accentColor?: string
@@ -77,12 +77,14 @@ export function BracketCard({
   className,
   accentColor = 'var(--primary)',
   allCorners = false,
+  ...props
 }: BracketCardProps) {
   return (
     <BracketWrapper
       $accentColor={accentColor}
       $allCorners={allCorners}
       className={cn('p-6 bg-background', className)}
+      {...props}
     >
       {allCorners && <div className="bracket-corners absolute inset-0 pointer-events-none" />}
       {children}

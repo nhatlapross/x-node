@@ -1,8 +1,11 @@
 'use client'
 
-import { Server, HardDrive, Cpu, Activity, Users, Coins } from "lucide-react"
+import { useMemo, useState } from "react"
+import { Server, HardDrive, Cpu, Activity, Users, Coins, CheckCircle, AlertCircle } from "lucide-react"
 import { BracketCard, DotProgress } from "@/components/common"
 import { Stagger, StaggerItem, ScaleOnHover } from "@/components/common"
+import { getVersionDistribution, findLatestVersion, compareVersions } from "@/lib/version"
+import { VersionDistributionChart } from "./VersionDistributionChart"
 
 interface NetworkPod {
   address: string
@@ -32,6 +35,34 @@ export function NetworkStats({
   formatBytes,
   totalCredits = 0,
 }: NetworkStatsProps) {
+  // State for version chart modal
+  const [showVersionChart, setShowVersionChart] = useState(false)
+
+  // Calculate version statistics dynamically
+  const versionStats = useMemo(() => {
+    const versions = registryPods.map(p => p.version).filter(Boolean)
+    const distribution = getVersionDistribution(versions)
+    const latestVersion = findLatestVersion(versions)
+
+    // Get top versions for display (up to 3)
+    const topVersions = distribution.slice(0, 3)
+
+    // Count nodes on latest vs outdated using version comparison
+    // A node is "latest" if its version compares equal to or greater than latestVersion
+    const latestCount = latestVersion
+      ? registryPods.filter(p => p.version && compareVersions(p.version, latestVersion) >= 0).length
+      : 0
+    const outdatedCount = registryPods.length - latestCount
+
+    return {
+      distribution,
+      latestVersion,
+      topVersions,
+      latestCount,
+      outdatedCount,
+    }
+  }, [registryPods])
+
   return (
     <>
       <Stagger animateOnMount className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -93,7 +124,7 @@ export function NetworkStats({
         </StaggerItem>
       </Stagger>
 
-      {/* Version Stats */}
+      {/* Version Stats - Dynamic */}
       <Stagger animateOnMount className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
         <StaggerItem>
           <BracketCard className="p-4 bg-card">
@@ -105,22 +136,48 @@ export function NetworkStats({
           </BracketCard>
         </StaggerItem>
 
+        {/* Latest Version - Dynamic */}
         <StaggerItem>
           <BracketCard className="p-4 bg-card">
-            <span className="text-xs uppercase tracking-widest text-muted-foreground">v0.6.0</span>
-            <p className="text-2xl font-light font-mono mt-1">
-              {registryPods.filter((p) => p.version === "0.6.0").length}
+            <div className="flex items-center gap-2 mb-1">
+              <CheckCircle className="w-3 h-3 text-green-500" />
+              <span className="text-xs uppercase tracking-widest text-muted-foreground">
+                Latest {versionStats.latestVersion ? `v${versionStats.latestVersion}` : ''}
+              </span>
+            </div>
+            <p className="text-2xl font-light font-mono text-green-500">
+              {versionStats.latestCount}
             </p>
+            {registryPods.length > 0 && (
+              <div className="text-xs text-muted-foreground mt-1">
+                {((versionStats.latestCount / registryPods.length) * 100).toFixed(0)}% updated
+              </div>
+            )}
           </BracketCard>
         </StaggerItem>
 
+        {/* Outdated Versions - Dynamic - Clickable */}
         <StaggerItem>
-          <BracketCard className="p-4 bg-card">
-            <span className="text-xs uppercase tracking-widest text-muted-foreground">v0.5.1</span>
-            <p className="text-2xl font-light font-mono mt-1">
-              {registryPods.filter((p) => p.version === "0.5.1").length}
-            </p>
-          </BracketCard>
+          <ScaleOnHover>
+            <BracketCard
+              className="p-4 bg-card cursor-pointer hover:border-yellow-500/50 transition-colors"
+              onClick={() => setShowVersionChart(true)}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <AlertCircle className="w-3 h-3 text-yellow-500" />
+                <span className="text-xs uppercase tracking-widest text-muted-foreground">Outdated</span>
+              </div>
+              <p className="text-2xl font-light font-mono text-yellow-500">
+                {versionStats.outdatedCount}
+              </p>
+              {versionStats.topVersions.length > 1 && (
+                <div className="text-xs text-muted-foreground mt-1 truncate">
+                  {versionStats.topVersions.slice(1, 3).map(v => `v${v.version} (${v.count})`).join(', ')}
+                </div>
+              )}
+              <div className="text-xs text-primary/70 mt-1">Click for details</div>
+            </BracketCard>
+          </ScaleOnHover>
         </StaggerItem>
 
         <StaggerItem>
@@ -135,6 +192,15 @@ export function NetworkStats({
           </BracketCard>
         </StaggerItem>
       </Stagger>
+
+      {/* Version Distribution Chart Modal */}
+      <VersionDistributionChart
+        open={showVersionChart}
+        onOpenChange={setShowVersionChart}
+        distribution={versionStats.distribution}
+        latestVersion={versionStats.latestVersion}
+        totalNodes={registryPods.length}
+      />
     </>
   )
 }

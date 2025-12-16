@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { Maximize, Minimize, HelpCircle, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -101,34 +101,30 @@ export function GlobeVisualization({
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
-  // Apply filters
-  const filteredNodes = nodes.filter((node) => {
-    if (statusFilter !== "all" && node.status !== statusFilter) return false;
-    return true;
-  });
+  // Apply filters - memoized
+  const filteredNodes = useMemo(() => {
+    if (statusFilter === "all") return nodes;
+    return nodes.filter((node) => node.status === statusFilter);
+  }, [nodes, statusFilter]);
 
-  // Filter and modify connections based on selection
-  const filteredConnections = showConnections
-    ? selectedNode
-      ? connections.map((conn) => {
-          // Check if connection involves selected node
-          const isRelevant =
-            (conn.startLat === selectedNode.lat &&
-              conn.startLng === selectedNode.lng) ||
-            (conn.endLat === selectedNode.lat &&
-              conn.endLng === selectedNode.lng);
+  // Filter and modify connections based on selection - memoized
+  const filteredConnections = useMemo(() => {
+    if (!showConnections) return [];
+    if (!selectedNode) return connections;
 
-          // Dim non-relevant connections
-          if (!isRelevant) {
-            return {
-              ...conn,
-              color: "#333333", // Very dim grey
-            };
-          }
-          return conn;
-        })
-      : connections
-    : [];
+    return connections.map((conn) => {
+      const isRelevant =
+        (conn.startLat === selectedNode.lat &&
+          conn.startLng === selectedNode.lng) ||
+        (conn.endLat === selectedNode.lat &&
+          conn.endLng === selectedNode.lng);
+
+      if (!isRelevant) {
+        return { ...conn, color: "#333333" };
+      }
+      return conn;
+    });
+  }, [connections, showConnections, selectedNode]);
 
   // Format uptime helper
   const formatUptime = (seconds: number): string => {
@@ -140,37 +136,90 @@ export function GlobeVisualization({
     return `${minutes}m`;
   };
 
-  // Handle node click
-  const handleNodeClick = (node: any) => {
-    const globeNode = filteredNodes.find((n) => n.id === node.id);
-    if (globeNode) {
-      setSelectedNode(selectedNode?.id === globeNode.id ? null : globeNode);
-    }
-  };
+  // Handle node click - memoized callback
+  const handleNodeClick = useCallback((node: any) => {
+    setSelectedNode(prev => prev?.id === node.id ? null : node);
+  }, []);
 
-  // Get peer node IDs for selected node
-  const peerNodeIds = new Set<string>();
-  if (selectedNode) {
+  // Get peer node IDs for selected node - memoized
+  const peerNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!selectedNode) return ids;
+
+    const selectedLat = selectedNode.lat;
+    const selectedLng = selectedNode.lng;
+
+    // Build a quick lookup map for nodes by coordinates
+    const nodeByCoords = new Map<string, GlobeNode>();
+    nodes.forEach(n => {
+      nodeByCoords.set(`${n.lat},${n.lng}`, n);
+    });
+
     connections.forEach((conn) => {
-      // Find connections involving the selected node
-      const selectedLat = selectedNode.lat;
-      const selectedLng = selectedNode.lng;
-
       if (conn.startLat === selectedLat && conn.startLng === selectedLng) {
-        // Find node at end of connection
-        const peerNode = nodes.find(
-          (n) => n.lat === conn.endLat && n.lng === conn.endLng
-        );
-        if (peerNode) peerNodeIds.add(peerNode.id);
+        const peerNode = nodeByCoords.get(`${conn.endLat},${conn.endLng}`);
+        if (peerNode) ids.add(peerNode.id);
       } else if (conn.endLat === selectedLat && conn.endLng === selectedLng) {
-        // Find node at start of connection
-        const peerNode = nodes.find(
-          (n) => n.lat === conn.startLat && n.lng === conn.startLng
-        );
-        if (peerNode) peerNodeIds.add(peerNode.id);
+        const peerNode = nodeByCoords.get(`${conn.startLat},${conn.startLng}`);
+        if (peerNode) ids.add(peerNode.id);
       }
     });
-  }
+
+    return ids;
+  }, [selectedNode, connections, nodes]);
+
+  // Cache geometries to avoid recreating them - significant performance improvement
+  const geometryCache = useRef<Map<string, THREE.BoxGeometry>>(new Map());
+
+  const getGeometry = useCallback((size: number): THREE.BoxGeometry => {
+    const key = size.toFixed(2);
+    if (!geometryCache.current.has(key)) {
+      geometryCache.current.set(key, new THREE.BoxGeometry(size, size, size));
+    }
+    return geometryCache.current.get(key)!;
+  }, []);
+
+  // Memoized THREE.js object creator - simplified for better performance
+  const createNodeObject = useCallback((node: any) => {
+    const size = Math.max(0.4, node.size * 0.6);
+
+    // Determine if node should be dimmed
+    const isSelected = selectedNode?.id === node.id;
+    const isPeer = selectedNode && peerNodeIds.has(node.id);
+    const shouldDim = selectedNode && !isSelected && !isPeer;
+
+    // Simplified: only 2 layers instead of 3 for better performance
+    const coreOpacity = shouldDim ? 0.15 : 1;
+    const glowOpacity = shouldDim ? 0.05 : (isSelected || isPeer ? 0.5 : 0.3);
+
+    // Core cube - use cached geometry
+    const geometry = getGeometry(size);
+    const material = new THREE.MeshBasicMaterial({
+      color: node.color,
+      transparent: shouldDim ?? false,
+      opacity: coreOpacity,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+
+    // Single glow layer for performance
+    const glowSize = (isSelected || isPeer ? size * 2 : size * 1.6);
+    const glowGeometry = getGeometry(glowSize);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: node.color,
+      transparent: true,
+      opacity: glowOpacity,
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+
+    const group = new THREE.Group();
+    group.add(glow);
+    group.add(mesh);
+
+    return group;
+  }, [selectedNode, peerNodeIds, getGeometry]);
+
+  // Memoized globe click handler
+  const handleGlobeClick = useCallback(() => setSelectedNode(null), []);
 
   if (!mounted) {
     return (
@@ -502,71 +551,8 @@ export function GlobeVisualization({
             )}, ${d.lng.toFixed(2)}</div>
           </div>
         `}
-        // Custom THREE.js object for square nodes with strong glow
-        objectThreeObject={(node: any) => {
-          const size = Math.max(0.4, node.size * 0.6);
-
-          // Determine if node should be dimmed
-          const isSelected = selectedNode?.id === node.id;
-          const isPeer = selectedNode && peerNodeIds.has(node.id);
-          const shouldDim = selectedNode && !isSelected && !isPeer;
-
-          // Adjust opacity based on selection state
-          const coreOpacity = shouldDim ? 0.15 : 1;
-          const glow1Opacity = shouldDim
-            ? 0.1
-            : isSelected || isPeer
-            ? 0.7
-            : 0.5;
-          const glow2Opacity = shouldDim
-            ? 0.05
-            : isSelected || isPeer
-            ? 0.4
-            : 0.2;
-
-          // Core bright cube
-          const geometry = new THREE.BoxGeometry(size, size, size);
-          const material = new THREE.MeshBasicMaterial({
-            color: node.color,
-            transparent: shouldDim ?? false,
-            opacity: coreOpacity,
-          });
-          const mesh = new THREE.Mesh(geometry, material);
-
-          // Inner glow layer
-          const glowGeometry1 = new THREE.BoxGeometry(
-            size * 1.4,
-            size * 1.4,
-            size * 1.4
-          );
-          const glowMaterial1 = new THREE.MeshBasicMaterial({
-            color: node.color,
-            transparent: true,
-            opacity: glow1Opacity,
-          });
-          const glow1 = new THREE.Mesh(glowGeometry1, glowMaterial1);
-
-          // Outer glow layer - bigger for selected/peer nodes
-          const outerSize = isSelected || isPeer ? size * 2.2 : size * 1.8;
-          const glowGeometry2 = new THREE.BoxGeometry(
-            outerSize,
-            outerSize,
-            outerSize
-          );
-          const glowMaterial2 = new THREE.MeshBasicMaterial({
-            color: node.color,
-            transparent: true,
-            opacity: glow2Opacity,
-          });
-          const glow2 = new THREE.Mesh(glowGeometry2, glowMaterial2);
-
-          const group = new THREE.Group();
-          group.add(glow2); // Outermost
-          group.add(glow1); // Middle
-          group.add(mesh); // Core
-
-          return group;
-        }}
+        // Custom THREE.js object - memoized for performance
+        objectThreeObject={createNodeObject}
         // Arcs (Connections) - Enhanced visibility
         arcsData={filteredConnections}
         arcStartLat={(d: any) => d.startLat}
@@ -588,9 +574,9 @@ export function GlobeVisualization({
         // Click handler for nodes
         onObjectClick={handleNodeClick}
         // Click on globe background to deselect
-        onGlobeClick={() => setSelectedNode(null)}
-        // Performance
-        rendererConfig={{ antialias: true, alpha: true }}
+        onGlobeClick={handleGlobeClick}
+        // Performance - disable antialiasing for better performance
+        rendererConfig={{ antialias: false, alpha: true }}
       />
     </div>
   );

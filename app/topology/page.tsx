@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   LayoutDashboard,
   Server,
@@ -15,10 +15,12 @@ import { DashboardLayout, PageHeader, type NavSection } from "@/components/layou
 import { Logo, LogoIcon } from "@/components/common";
 import { FadeIn } from "@/components/common";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
-import { useMemo } from "react";
-import { getGeolocation, batchGeolocate } from "@/lib/geolocation";
+import { batchGeolocate } from "@/lib/geolocation";
+import { getFromDB, setToDB, getAllFromDB, STORES, CACHE_TTL, cacheKeys } from "@/lib/indexedDB";
+import { findLatestVersion, getVersionColor } from "@/lib/version";
 import type { GlobeNode, GlobeConnection } from "@/components/globe";
 
 // Dynamic import to avoid SSR issues
@@ -138,6 +140,7 @@ export default function TopologyPage() {
   const [nodes, setNodes] = useState<NodeData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [isCached, setIsCached] = useState(false);
   const [isDark, setIsDark] = useState(false);
 
   const currentNetwork = NETWORK_RPC_ENDPOINTS.find(n => n.id === selectedNetwork)!;
@@ -206,45 +209,109 @@ export default function TopologyPage() {
     }
   };
 
-  const fetchRegistryPods = useCallback(async (networkId: string) => {
+  // Load cached node data for pods from IndexedDB
+  const loadCachedNodes = useCallback(async (pods: NetworkPod[]): Promise<NodeData[]> => {
+    // Get all cached nodes at once for better performance
+    const cachedNodes = await getAllFromDB<NodeData>(STORES.NODES);
+
+    return pods.map((pod, idx) => {
+      const cacheKey = cacheKeys.nodeData(pod.address);
+      const cached = cachedNodes.get(cacheKey);
+      if (cached && cached.status !== 'loading') {
+        return cached;
+      }
+      return {
+        ip: pod.address.split(":")[0],
+        address: pod.address,
+        label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
+        pubkey: pod.pubkey,
+        registryVersion: pod.version,
+        status: "loading" as const,
+      };
+    });
+  }, []);
+
+  const fetchRegistryPods = useCallback(async (networkId: string, skipCache: boolean = false) => {
     const network = NETWORK_RPC_ENDPOINTS.find(n => n.id === networkId);
     if (!network) return;
 
-    setRegistryStatus("loading");
     setRegistryError(null);
-    setNodes([]);
 
+    // Try IndexedDB cache first for instant display
+    if (!skipCache) {
+      try {
+        const cachedPods = await getFromDB<NetworkPod[]>(STORES.REGISTRY, cacheKeys.registryPods(networkId));
+        if (cachedPods && cachedPods.length > 0) {
+          setRegistryPods(cachedPods);
+          setRegistryStatus("success");
+          setIsCached(true);
+          try {
+            const cachedNodes = await loadCachedNodes(cachedPods);
+            setNodes(cachedNodes);
+
+            // Count how many are already loaded
+            const loadedCount = cachedNodes.filter(n => n.status !== 'loading').length;
+
+            // If all nodes are cached, set lastUpdate
+            if (loadedCount === cachedNodes.length) {
+              setLastUpdate(new Date());
+            }
+          } catch (err) {
+          }
+        }
+      } catch (err) {
+      }
+    }
+
+    // Fetch fresh data
     const res = await callRpcEndpoint(network.rpcUrl, "get-pods");
 
     if (res.error) {
-      setRegistryStatus("error");
-      setRegistryError(res.error);
-      setRegistryPods([]);
+      if (skipCache || registryPods.length === 0) {
+        setRegistryStatus("error");
+        setRegistryError(res.error);
+        setRegistryPods([]);
+      }
       return;
     }
 
     const data = res.result as NetworkPodsResponse;
     if (!data.pods || data.pods.length === 0) {
-      setRegistryStatus("error");
-      setRegistryError("No pods found in registry");
-      setRegistryPods([]);
+      if (skipCache || registryPods.length === 0) {
+        setRegistryStatus("error");
+        setRegistryError("No pods found in registry");
+        setRegistryPods([]);
+      }
       return;
     }
 
     const sortedPods = data.pods.sort((a, b) => b.last_seen_timestamp - a.last_seen_timestamp);
+
+    // Set state FIRST to ensure UI updates
     setRegistryPods(sortedPods);
     setRegistryStatus("success");
+    setIsCached(false);
 
-    const initialNodes: NodeData[] = sortedPods.map((pod, idx) => ({
-      ip: pod.address.split(":")[0],
-      address: pod.address,
-      label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
-      pubkey: pod.pubkey,
-      registryVersion: pod.version,
-      status: "loading" as const,
-    }));
-    setNodes(initialNodes);
-  }, []);
+    // Cache the registry pods to IndexedDB (don't await, do in background)
+    setToDB(STORES.REGISTRY, cacheKeys.registryPods(networkId), sortedPods, CACHE_TTL.REGISTRY_PODS)
+
+    // Initialize nodes with cached data if available
+    try {
+      const initialNodes = await loadCachedNodes(sortedPods);
+      setNodes(initialNodes);
+    } catch (err) {
+      // Fallback: create loading nodes
+      const loadingNodes = sortedPods.map((pod, idx) => ({
+        ip: pod.address.split(":")[0],
+        address: pod.address,
+        label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
+        pubkey: pod.pubkey,
+        registryVersion: pod.version,
+        status: "loading" as const,
+      }));
+      setNodes(loadingNodes);
+    }
+  }, [loadCachedNodes, registryPods.length]);
 
   const fetchNodeDataAndUpdate = useCallback(async (pod: NetworkPod, index: number) => {
     const ip = pod.address.split(":")[0];
@@ -260,10 +327,9 @@ export default function TopologyPage() {
     const [versionRes, statsRes, podsRes] = await Promise.all([
       callApi(ip, "get-version"),
       callApi(ip, "get-stats"),
-      callApi(ip, "get-pods"), // Fetch pods even if node might be offline
+      callApi(ip, "get-pods"),
     ]);
 
-    // Determine if node is offline (both version and stats failed)
     const isOffline = versionRes.error && statsRes.error;
 
     const fullResult: NodeData = {
@@ -271,25 +337,45 @@ export default function TopologyPage() {
       status: isOffline ? "offline" : "online",
       version: versionRes.result as VersionResponse | undefined,
       stats: statsRes.result as StatsResponse | undefined,
-      pods: podsRes.result as PodsResponse | undefined, // Include pods even for offline nodes
+      pods: podsRes.result as PodsResponse | undefined,
       error: isOffline ? (versionRes.error || statsRes.error) : undefined,
       lastFetched: Date.now(),
     };
 
+    // Cache the result to IndexedDB
+    setToDB(STORES.NODES, cacheKeys.nodeData(pod.address), fullResult, CACHE_TTL.NODE_DATA);
     setNodes(prev => prev.map(n => n.address === pod.address ? fullResult : n));
     return fullResult;
   }, []);
 
-  const fetchAllNodesData = useCallback(async () => {
+  const fetchAllNodesData = useCallback(async (forceRefresh: boolean = false) => {
     if (registryPods.length === 0) return;
+
+    // Get cached nodes from IndexedDB to determine which need fetching
+    const cachedNodes = await getAllFromDB<NodeData>(STORES.NODES);
+
+    // Filter to only fetch nodes that need updating
+    const podsToFetch = forceRefresh
+      ? registryPods
+      : registryPods.filter((pod) => {
+          const cacheKey = cacheKeys.nodeData(pod.address);
+          const cached = cachedNodes.get(cacheKey);
+          return !cached || cached.status === 'loading';
+        });
+
+    if (podsToFetch.length === 0) {
+      setLastUpdate(new Date());
+      return;
+    }
 
     setIsLoading(true);
 
-    const BATCH_SIZE = 5;
+    // Increased batch size for faster loading
+    const BATCH_SIZE = 10;
     const batches = [];
 
-    for (let i = 0; i < registryPods.length; i += BATCH_SIZE) {
-      batches.push(registryPods.slice(i, i + BATCH_SIZE));
+    for (let i = 0; i < podsToFetch.length; i += BATCH_SIZE) {
+      batches.push(podsToFetch.slice(i, i + BATCH_SIZE));
     }
 
     for (const batch of batches) {
@@ -303,11 +389,65 @@ export default function TopologyPage() {
 
     setLastUpdate(new Date());
     setIsLoading(false);
+    setIsCached(false);
   }, [registryPods, fetchNodeDataAndUpdate]);
 
-  const handleNetworkChange = useCallback((networkId: string) => {
-    setSelectedNetwork(networkId);
-    fetchRegistryPods(networkId);
+  // Handle network change - show cached data immediately, fetch fresh in background
+  const handleNetworkChange = useCallback(async (networkId: string) => {
+    // Reset to loading state first
+    setRegistryStatus("loading");
+
+    // Try to load from cache immediately (instant switch)
+    try {
+      const cachedPods = await getFromDB<NetworkPod[]>(STORES.REGISTRY, cacheKeys.registryPods(networkId));
+      if (cachedPods && cachedPods.length > 0) {
+
+        const cachedNodes = await getAllFromDB<NodeData>(STORES.NODES);
+        const initialNodes = cachedPods.map((pod, idx) => {
+          const cacheKey = cacheKeys.nodeData(pod.address);
+          const cached = cachedNodes.get(cacheKey);
+          if (cached && cached.status !== 'loading') {
+            return cached;
+          }
+          return {
+            ip: pod.address.split(":")[0],
+            address: pod.address,
+            label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
+            pubkey: pod.pubkey,
+            registryVersion: pod.version,
+            status: "loading" as const,
+          };
+        });
+
+        const loadedCount = initialNodes.filter(n => n.status !== 'loading').length;
+
+        // Set all state together
+        setRegistryPods(cachedPods);
+        setNodes(initialNodes);
+        setIsCached(true);
+        setRegistryStatus("success");
+        // Set selectedNetwork LAST to trigger useEffect
+        setSelectedNetwork(networkId);
+      } else {
+        // No cache, show loading
+        setNodes([]);
+        setRegistryPods([]);
+        setGeolocations(new Map());
+        setIsCached(false);
+        setSelectedNetwork(networkId);
+        setRegistryStatus("loading");
+      }
+    } catch (err) {
+      setNodes([]);
+      setRegistryPods([]);
+      setGeolocations(new Map());
+      setIsCached(false);
+      setSelectedNetwork(networkId);
+      setRegistryStatus("loading");
+    }
+
+    // Fetch fresh data in background
+    fetchRegistryPods(networkId, false);
   }, [fetchRegistryPods]);
 
   useEffect(() => {
@@ -315,36 +455,63 @@ export default function TopologyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Fetch nodes data when registry pods change or network switches
+  // Using a ref to track network changes since React batches state updates
+  const lastFetchedNetworkRef = useRef<string | null>(null);
+
   useEffect(() => {
+
     if (registryStatus === "success" && registryPods.length > 0) {
-      fetchAllNodesData();
+      // Always fetch if network changed
+      const networkChanged = lastFetchedNetworkRef.current !== selectedNetwork;
+
+      if (networkChanged) {
+        lastFetchedNetworkRef.current = selectedNetwork;
+        fetchAllNodesData();
+      } else {
+        // Same network - only fetch if there are loading nodes
+        const hasLoadingNodes = nodes.some(n => n.status === 'loading');
+        if (hasLoadingNodes) {
+          fetchAllNodesData();
+        } else {
+        }
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registryStatus, registryPods.length]);
+  }, [registryStatus, registryPods.length, selectedNetwork]);
 
   // Store geolocation data
   const [geolocations, setGeolocations] = useState<Map<string, { lat: number; lng: number; city: string; country: string; region: string }>>(new Map());
   const [geoLoading, setGeoLoading] = useState(false);
 
-  // Fetch geolocation data when nodes change
+  // Track loaded nodes count to avoid recalculating in dependency
+  const loadedNodesCount = useMemo(() =>
+    nodes.filter(n => n.status !== 'loading').length
+  , [nodes]);
+
+  // Fetch geolocation data when loaded nodes change
+  const lastGeoFetchRef = useRef<number>(0);
+
   useEffect(() => {
     const loadedNodes = nodes.filter(n => n.status !== 'loading');
     if (loadedNodes.length === 0) return;
 
+    // Debounce: only fetch if 2 seconds have passed since last fetch
+    const now = Date.now();
+    if (now - lastGeoFetchRef.current < 2000) return;
+    lastGeoFetchRef.current = now;
+
     const ipAddresses = loadedNodes.map(n => n.address.split(':')[0]);
 
     setGeoLoading(true);
-    console.log(`Fetching geolocation for ${ipAddresses.length} IPs...`);
 
     batchGeolocate(ipAddresses).then(results => {
       setGeolocations(results);
       setGeoLoading(false);
-      console.log(`Geolocation complete! ${results.size} locations fetched.`);
-    }).catch(error => {
-      console.error('Geolocation error:', error);
+    }).catch(() => {
       setGeoLoading(false);
     });
-  }, [nodes]);
+  }, [loadedNodesCount]); // Use memoized count instead of nodes array
 
   // Convert nodes to globe format with geolocation
   const { globeNodes, globeConnections } = useMemo(() => {
@@ -355,6 +522,12 @@ export default function TopologyPage() {
       return { globeNodes: [], globeConnections: [] };
     }
 
+    // Find latest version dynamically from all nodes
+    const allVersions = loadedNodes
+      .map(n => n.version?.version)
+      .filter((v): v is string => !!v);
+    const latestVersion = findLatestVersion(allVersions);
+
     const globeNodes = loadedNodes
       .map((node) => {
         const ip = node.address.split(':')[0];
@@ -364,7 +537,6 @@ export default function TopologyPage() {
         if (!geo) return null;
 
         const isOnline = node.status === 'online';
-        const isLatestVersion = node.version?.version === '0.6.0';
 
         return {
           id: node.address,
@@ -373,9 +545,8 @@ export default function TopologyPage() {
           label: node.pubkey ? `${node.pubkey.slice(0, 8)}...` : ip,
           status: node.status,
           size: Math.max(1, Math.min(2, (node.pods?.total_count || 0) / 10 + 1)),
-          color: isOnline
-            ? (isLatestVersion ? '#22c55e' : '#eab308')
-            : '#ef4444',
+          // Use dynamic version color detection
+          color: getVersionColor(node.version?.version, latestVersion, isOnline),
           // Additional data for detail panel
           version: node.version?.version,
           cpu: node.stats?.cpu_percent,
@@ -398,97 +569,59 @@ export default function TopologyPage() {
       ipToNodes.set(ip, node);
     });
 
-    console.log(`Building connections for ${loadedNodes.length} nodes...`);
-    console.log(`Available geolocations: ${geolocations.size}`);
-
-    // Debug: Check if nodes have pods data
-    loadedNodes.forEach((node, idx) => {
-      console.log(`Node ${idx}: ${node.label}`, {
-        hasPods: !!node.pods,
-        podsCount: node.pods?.total_count,
-        podsArray: node.pods?.pods?.length,
-        status: node.status
+    // Pre-build bidirectional lookup for O(1) checks
+    const peerConnections = new Map<string, Set<string>>();
+    loadedNodes.forEach(node => {
+      if (!node.pods?.pods) return;
+      const sourceIp = node.address.split(':')[0];
+      const peers = new Set<string>();
+      node.pods.pods.forEach(pod => {
+        peers.add(pod.address.split(':')[0]);
       });
+      peerConnections.set(sourceIp, peers);
     });
 
-    let connectionCount = 0;
-    let skippedNoGeo = 0;
-    let skippedNoMatch = 0;
+    // Limit connections for performance (max 500)
+    const MAX_CONNECTIONS = 500;
 
     loadedNodes.forEach((node) => {
-      // Check if node has pods
-      if (!node.pods) {
-        console.log(`Node ${node.label} has NO pods object`);
-        return;
-      }
-
-      if (!node.pods.pods || node.pods.pods.length === 0) {
-        console.log(`Node ${node.label} has empty pods array (total_count: ${node.pods.total_count})`);
-        return;
-      }
+      if (globeConnections.length >= MAX_CONNECTIONS) return;
+      if (!node.pods?.pods || node.pods.pods.length === 0) return;
 
       const sourceIp = node.address.split(':')[0];
       const sourceGeo = geolocations.get(sourceIp);
-
-      if (!sourceGeo) {
-        skippedNoGeo++;
-        return;
-      }
-
-      console.log(`Node ${node.label} (${sourceIp}) has ${node.pods.pods.length} peers`);
+      if (!sourceGeo) return;
 
       node.pods.pods.forEach((pod) => {
+        if (globeConnections.length >= MAX_CONNECTIONS) return;
+
         const targetIp = pod.address.split(':')[0];
         const targetNode = ipToNodes.get(targetIp);
         const targetGeo = geolocations.get(targetIp);
 
-        if (!targetNode) {
-          console.log(`  → Peer ${targetIp} not found in node list`);
-          skippedNoMatch++;
-          return;
-        }
+        if (!targetNode || !targetGeo || targetNode.address === node.address) return;
 
-        if (!targetGeo) {
-          console.log(`  → Peer ${targetIp} has no geolocation`);
-          skippedNoGeo++;
-          return;
-        }
+        const connectionId = [node.address, targetNode.address].sort().join('-');
+        if (connectionSet.has(connectionId)) return;
 
-        if (targetNode.address !== node.address) {
-          const connectionId = [node.address, targetNode.address].sort().join('-');
+        connectionSet.add(connectionId);
 
-          if (!connectionSet.has(connectionId)) {
-            connectionSet.add(connectionId);
-            connectionCount++;
-            console.log(`  ✓ Connection: ${node.label} ↔ ${targetNode.pubkey?.slice(0,8) || targetIp}`);
+        const isActive = Date.now() / 1000 - pod.last_seen_timestamp < 300;
+        // O(1) bidirectional check using pre-built lookup
+        const targetPeers = peerConnections.get(targetIp);
+        const isBidirectional = targetPeers?.has(sourceIp) ?? false;
 
-            const isActive = Date.now() / 1000 - pod.last_seen_timestamp < 300;
-            const targetPods = targetNode.pods?.pods || [];
-            const isBidirectional = targetPods.some(
-              p => p.address.split(':')[0] === sourceIp
-            );
-
-            globeConnections.push({
-              startLat: sourceGeo.lat,
-              startLng: sourceGeo.lng,
-              endLat: targetGeo.lat,
-              endLng: targetGeo.lng,
-              color: isBidirectional
-                ? (isActive ? '#00ffff' : '#0099ff')
-                : (isActive ? '#ffdd00' : '#888888'),
-            });
-          }
-        }
+        globeConnections.push({
+          startLat: sourceGeo.lat,
+          startLng: sourceGeo.lng,
+          endLat: targetGeo.lat,
+          endLng: targetGeo.lng,
+          color: isBidirectional
+            ? (isActive ? '#00ffff' : '#0099ff')
+            : (isActive ? '#ffdd00' : '#888888'),
+        });
       });
     });
-
-    console.log(`\n=== Connection Summary ===`);
-    console.log(`Total nodes: ${loadedNodes.length}`);
-    console.log(`Nodes with geolocation: ${geolocations.size}`);
-    console.log(`Connections created: ${connectionCount}`);
-    console.log(`Skipped (no geo): ${skippedNoGeo}`);
-    console.log(`Skipped (peer not in list): ${skippedNoMatch}`);
-    console.log(`=========================\n`);
 
     return { globeNodes, globeConnections };
   }, [nodes, geolocations]);
@@ -528,7 +661,7 @@ export default function TopologyPage() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => fetchRegistryPods(selectedNetwork)}
+          onClick={() => fetchRegistryPods(selectedNetwork, true)}
           disabled={isLoading || registryStatus === "loading"}
         >
           <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
@@ -543,6 +676,11 @@ export default function TopologyPage() {
             <span className="flex items-center gap-2">
               <Globe className="w-4 h-4" />
               {currentNetwork.name}
+              {isCached && (
+                <Badge variant="outline" className="text-xs ml-2">
+                  Cached
+                </Badge>
+              )}
               {lastUpdate && (
                 <span className="text-xs text-muted-foreground ml-2">
                   Updated: {lastUpdate.toLocaleTimeString()}
@@ -563,7 +701,7 @@ export default function TopologyPage() {
               variant="destructive"
               size="sm"
               className="mt-4"
-              onClick={() => fetchRegistryPods(selectedNetwork)}
+              onClick={() => fetchRegistryPods(selectedNetwork, true)}
             >
               Retry
             </Button>

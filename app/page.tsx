@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   LayoutDashboard,
   Server,
@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { batchGeolocate } from "@/lib/geolocation";
+import { getFromDB, setToDB, getAllFromDB, STORES, CACHE_TTL, cacheKeys } from "@/lib/indexedDB";
 
 // Types based on pRPC API documentation
 interface VersionResponse {
@@ -174,6 +175,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [isCached, setIsCached] = useState(false);
 
   // Pod Credits data
   const [podCredits, setPodCredits] = useState<Map<string, number>>(new Map());
@@ -193,15 +195,22 @@ export default function Home() {
   // Geolocation data
   const [geolocations, setGeolocations] = useState<Map<string, { lat: number; lng: number; city: string; country: string; countryCode: string; region: string }>>(new Map());
 
-  // Debug: log state changes
-  useEffect(() => {
-    console.log('[State] registryStatus:', registryStatus, 'registryPods:', registryPods.length, 'nodes:', nodes.length);
-  }, [registryStatus, registryPods.length, nodes.length]);
+  // Track loaded nodes count to avoid recalculating in dependency
+  const loadedNodesCount = useMemo(() =>
+    nodes.filter(n => n.status !== 'loading').length
+  , [nodes]);
 
-  // Fetch geolocation data when nodes change
+  // Fetch geolocation data when loaded nodes change
+  const lastGeoFetchRef = useRef<number>(0);
+
   useEffect(() => {
     const loadedNodes = nodes.filter(n => n.status !== 'loading');
     if (loadedNodes.length === 0) return;
+
+    // Debounce: only fetch if 2 seconds have passed since last fetch
+    const now = Date.now();
+    if (now - lastGeoFetchRef.current < 2000) return;
+    lastGeoFetchRef.current = now;
 
     const ipAddresses = loadedNodes.map(n => n.address.split(':')[0]);
 
@@ -226,7 +235,7 @@ export default function Home() {
         return node;
       }));
     });
-  }, [nodes.length, nodes.filter(n => n.status !== 'loading').length]);
+  }, [loadedNodesCount]); // Use memoized count instead of inline filter
 
   // Get current network config
   const currentNetwork = NETWORK_RPC_ENDPOINTS.find(n => n.id === selectedNetwork)!;
@@ -237,7 +246,6 @@ export default function Home() {
   ): Promise<{ result?: unknown; error?: string }> => {
     try {
       const endpoint = `http://${ip}:6000/rpc`;
-      console.log('[callApi]', method, 'to', endpoint);
 
       const response = await fetch("/api/prpc", {
         method: "POST",
@@ -249,18 +257,15 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        //console.error('[callApi] Response not OK:', response.status, response.statusText);
         return { error: `HTTP ${response.status}: ${response.statusText}` };
       }
 
       const data = await response.json();
-      console.log('[callApi]', method, 'Response data:', JSON.stringify(data, null, 2));
 
       if (data.error) return { error: data.error };
       // JSON-RPC response has result in data.result
       return { result: data.result };
     } catch (e) {
-      console.error('[callApi] Exception:', e);
       return { error: e instanceof Error ? e.message : "Unknown error" };
     }
   };
@@ -271,7 +276,6 @@ export default function Home() {
     method: string
   ): Promise<{ result?: unknown; error?: string }> => {
     try {
-      console.log('[callRpcEndpoint]', method, 'to', rpcUrl);
 
       const response = await fetch("/api/prpc", {
         method: "POST",
@@ -283,17 +287,14 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        console.error('[callRpcEndpoint] Response not OK:', response.status);
         return { error: `HTTP ${response.status}` };
       }
 
       const data = await response.json();
-      console.log('[callRpcEndpoint] Response:', data);
 
       if (data.error) return { error: data.error };
       return { result: data.result };
     } catch (e) {
-      console.error('[callRpcEndpoint] Exception:', e);
       return { error: e instanceof Error ? e.message : "Unknown error" };
     }
   };
@@ -304,7 +305,6 @@ export default function Home() {
     try {
       const response = await fetch("/api/pod-credits");
       if (!response.ok) {
-        console.error('[PodCredits] Failed to fetch:', response.status);
         return;
       }
 
@@ -315,66 +315,123 @@ export default function Home() {
           creditsMap.set(pc.pod_id, pc.credits);
         });
         setPodCredits(creditsMap);
-        console.log('[PodCredits] Loaded credits for', creditsMap.size, 'pods');
       }
     } catch (e) {
-      console.error('[PodCredits] Error:', e);
     } finally {
       setPodCreditsLoading(false);
     }
   }, []);
 
+  // Load cached node data for a list of pods from IndexedDB
+  const loadCachedNodes = useCallback(async (pods: NetworkPod[]): Promise<NodeData[]> => {
+    // Get all cached nodes at once for better performance
+    const cachedNodes = await getAllFromDB<NodeData>(STORES.NODES);
+
+    return pods.map((pod, idx) => {
+      const cacheKey = cacheKeys.nodeData(pod.address);
+      const cached = cachedNodes.get(cacheKey);
+      if (cached && cached.status !== 'loading') {
+        return cached;
+      }
+      return {
+        ip: pod.address.split(":")[0],
+        address: pod.address,
+        label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
+        pubkey: pod.pubkey,
+        registryVersion: pod.version,
+        status: "loading" as const,
+      };
+    });
+  }, []);
+
   // Fetch pods from selected network registry
-  const fetchRegistryPods = useCallback(async (networkId: string) => {
+  const fetchRegistryPods = useCallback(async (networkId: string, skipCache: boolean = false) => {
     const network = NETWORK_RPC_ENDPOINTS.find(n => n.id === networkId);
     if (!network) return;
 
-    console.log('[Registry] Fetching pods from:', network.name);
-    setRegistryStatus("loading");
     setRegistryError(null);
-    setNodes([]);
     setSelectedNode(null);
 
+    // Try loading from IndexedDB cache first for instant display
+    if (!skipCache) {
+      try {
+        const cachedPods = await getFromDB<NetworkPod[]>(STORES.REGISTRY, cacheKeys.registryPods(networkId));
+        if (cachedPods && cachedPods.length > 0) {
+          setRegistryPods(cachedPods);
+          setRegistryStatus("success");
+          setIsCached(true);
+          // Load cached node data from IndexedDB
+          try {
+            const cachedNodes = await loadCachedNodes(cachedPods);
+            setNodes(cachedNodes);
+
+            // Count how many are already loaded
+            const loadedCount = cachedNodes.filter(n => n.status !== 'loading').length;
+
+            // If all nodes are cached, set lastUpdate and skip fetching
+            if (loadedCount === cachedNodes.length) {
+              setLastUpdate(new Date());
+            }
+          } catch (err) {
+          }
+        }
+      } catch (err) {
+        // Continue to fetch from API
+      }
+    }
+
+    // Fetch fresh data
     const res = await callRpcEndpoint(network.rpcUrl, "get-pods");
-    console.log('[Registry] Response:', res);
 
     if (res.error) {
-      console.log('[Registry] Error:', res.error);
-      setRegistryStatus("error");
-      setRegistryError(res.error);
-      setRegistryPods([]);
+      // Only show error if we don't have cached data
+      if (skipCache || registryPods.length === 0) {
+        setRegistryStatus("error");
+        setRegistryError(res.error);
+        setRegistryPods([]);
+      }
       return;
     }
 
     const data = res.result as NetworkPodsResponse;
-    console.log('[Registry] Got pods:', data.pods?.length);
 
     if (!data.pods || data.pods.length === 0) {
-      console.log('[Registry] No pods found');
-      setRegistryStatus("error");
-      setRegistryError("No pods found in registry");
-      setRegistryPods([]);
+      if (skipCache || registryPods.length === 0) {
+        setRegistryStatus("error");
+        setRegistryError("No pods found in registry");
+        setRegistryPods([]);
+      }
       return;
     }
 
     // Sort by last_seen_timestamp (most recent first)
     const sortedPods = data.pods.sort((a, b) => b.last_seen_timestamp - a.last_seen_timestamp);
+
+    // Set state FIRST to ensure UI updates
     setRegistryPods(sortedPods);
     setRegistryStatus("success");
-    console.log('[Registry] Success! Set', sortedPods.length, 'pods');
+    setIsCached(false);
 
-    // Initialize nodes with loading state
-    const initialNodes: NodeData[] = sortedPods.map((pod, idx) => ({
-      ip: pod.address.split(":")[0],
-      address: pod.address,
-      label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
-      pubkey: pod.pubkey,
-      registryVersion: pod.version,
-      status: "loading" as const,
-    }));
-    setNodes(initialNodes);
-    console.log('[Registry] Set initial nodes:', initialNodes.length);
-  }, []);
+    // Cache the registry pods to IndexedDB (don't await, do in background)
+    setToDB(STORES.REGISTRY, cacheKeys.registryPods(networkId), sortedPods, CACHE_TTL.REGISTRY_PODS)
+
+    // Initialize nodes with cached data if available
+    try {
+      const initialNodes = await loadCachedNodes(sortedPods);
+      setNodes(initialNodes);
+    } catch (err) {
+      // Fallback: create loading nodes
+      const loadingNodes = sortedPods.map((pod, idx) => ({
+        ip: pod.address.split(":")[0],
+        address: pod.address,
+        label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
+        pubkey: pod.pubkey,
+        registryVersion: pod.version,
+        status: "loading" as const,
+      }));
+      setNodes(loadingNodes);
+    }
+  }, [loadCachedNodes, registryPods.length]);
 
   // Fetch detailed data for a single node with progressive loading
   const fetchNodeDataAndUpdate = useCallback(async (pod: NetworkPod, index: number) => {
@@ -400,7 +457,10 @@ export default function Home() {
         ...baseData,
         status: "offline",
         error: versionRes.error || statsRes.error,
+        lastFetched: Date.now(),
       };
+      // Cache offline result to IndexedDB
+      setToDB(STORES.NODES, cacheKeys.nodeData(pod.address), offlineResult, CACHE_TTL.NODE_DATA);
       setNodes(prev => prev.map(n => n.address === pod.address ? offlineResult : n));
       return offlineResult;
     }
@@ -417,15 +477,12 @@ export default function Home() {
 
     // Phase 2: Fetch pods data (slower, less critical)
     const podsRes = await callApi(ip, "get-pods");
-    console.log('[fetchNodeDataAndUpdate] Pods response for', ip, ':', podsRes);
 
     // Only set pods if we got a valid response
     let podsData: PodsResponse | undefined;
     if (podsRes.result && !podsRes.error) {
       podsData = podsRes.result as PodsResponse;
-      console.log('[fetchNodeDataAndUpdate] Got', podsData.pods?.length, 'peers for', ip);
     } else {
-      console.log('[fetchNodeDataAndUpdate] No pods data for', ip, '- error:', podsRes.error);
     }
 
     const fullResult: NodeData = {
@@ -433,27 +490,43 @@ export default function Home() {
       pods: podsData,
     };
 
+    // Cache the full result to IndexedDB
+    setToDB(STORES.NODES, cacheKeys.nodeData(pod.address), fullResult, CACHE_TTL.NODE_DATA);
     setNodes(prev => prev.map(n => n.address === pod.address ? fullResult : n));
     return fullResult;
   }, []);
 
   // Fetch all nodes with concurrency limit for better performance
-  const fetchAllNodesData = useCallback(async () => {
-    console.log('[fetchAllNodesData] Called with', registryPods.length, 'pods');
+  const fetchAllNodesData = useCallback(async (forceRefresh: boolean = false) => {
     if (registryPods.length === 0) {
-      console.log('[fetchAllNodesData] No pods to fetch, returning');
+      return;
+    }
+
+    // Get cached nodes from IndexedDB to determine which need fetching
+    const cachedNodes = await getAllFromDB<NodeData>(STORES.NODES);
+
+    // Filter to only fetch nodes that need updating
+    const podsToFetch = forceRefresh
+      ? registryPods
+      : registryPods.filter((pod) => {
+          const cacheKey = cacheKeys.nodeData(pod.address);
+          const cached = cachedNodes.get(cacheKey);
+          return !cached || cached.status === 'loading';
+        });
+
+    if (podsToFetch.length === 0) {
+      setLastUpdate(new Date());
       return;
     }
 
     setIsLoading(true);
-    console.log('[fetchAllNodesData] Starting batched fetch for', registryPods.length, 'nodes');
 
-    // Process in batches with concurrency limit
-    const BATCH_SIZE = 5;
+    // Process in batches with concurrency limit (increased for faster loading)
+    const BATCH_SIZE = 10;
     const batches = [];
 
-    for (let i = 0; i < registryPods.length; i += BATCH_SIZE) {
-      batches.push(registryPods.slice(i, i + BATCH_SIZE));
+    for (let i = 0; i < podsToFetch.length; i += BATCH_SIZE) {
+      batches.push(podsToFetch.slice(i, i + BATCH_SIZE));
     }
 
     for (const batch of batches) {
@@ -467,12 +540,72 @@ export default function Home() {
 
     setLastUpdate(new Date());
     setIsLoading(false);
+    setIsCached(false);
   }, [registryPods, fetchNodeDataAndUpdate]);
 
-  // Handle network change
-  const handleNetworkChange = useCallback((networkId: string) => {
-    setSelectedNetwork(networkId);
-    fetchRegistryPods(networkId);
+  // Handle network change - show cached data immediately, fetch fresh in background
+  const handleNetworkChange = useCallback(async (networkId: string) => {
+    setSelectedNode(null);
+
+    // Reset to loading state first
+    setRegistryStatus("loading");
+
+    let hasLoadingNodes = false;
+
+    // Try to load from cache immediately (instant switch)
+    try {
+      const cachedPods = await getFromDB<NetworkPod[]>(STORES.REGISTRY, cacheKeys.registryPods(networkId));
+      if (cachedPods && cachedPods.length > 0) {
+
+        const cachedNodes = await getAllFromDB<NodeData>(STORES.NODES);
+        const initialNodes = cachedPods.map((pod, idx) => {
+          const cacheKey = cacheKeys.nodeData(pod.address);
+          const cached = cachedNodes.get(cacheKey);
+          if (cached && cached.status !== 'loading') {
+            return cached;
+          }
+          hasLoadingNodes = true;
+          return {
+            ip: pod.address.split(":")[0],
+            address: pod.address,
+            label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
+            pubkey: pod.pubkey,
+            registryVersion: pod.version,
+            status: "loading" as const,
+          };
+        });
+
+        const loadedCount = initialNodes.filter(n => n.status !== 'loading').length;
+
+        // Set all state together BEFORE changing selectedNetwork
+        // This ensures useEffect sees the correct nodes state
+        setRegistryPods(cachedPods);
+        setNodes(initialNodes);
+        setIsCached(true);
+        setRegistryStatus("success");
+        // Set selectedNetwork LAST to trigger useEffect with correct state
+        setSelectedNetwork(networkId);
+      } else {
+        // No cache, show loading
+        setNodes([]);
+        setRegistryPods([]);
+        setIsCached(false);
+        // Set selectedNetwork LAST
+        setSelectedNetwork(networkId);
+        setRegistryStatus("loading");
+        hasLoadingNodes = true;
+      }
+    } catch (err) {
+      setNodes([]);
+      setRegistryPods([]);
+      setIsCached(false);
+      setSelectedNetwork(networkId);
+      setRegistryStatus("loading");
+      hasLoadingNodes = true;
+    }
+
+    // Fetch fresh data in background
+    fetchRegistryPods(networkId, false);
   }, [fetchRegistryPods]);
 
   // Initial fetch on mount
@@ -482,16 +615,116 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fetch nodes data when registry pods change
+  // Fetch nodes data when registry pods change or network switches
+  // Using a ref to track network changes since React batches state updates
+  const lastFetchedNetworkRef = useRef<string | null>(null);
+
   useEffect(() => {
-    console.log('[useEffect] Registry status:', registryStatus, 'Pods:', registryPods.length);
+
     if (registryStatus === "success" && registryPods.length > 0) {
-      console.log('[useEffect] Triggering fetchAllNodesData');
-      fetchAllNodesData();
+      // Always fetch if network changed or if this is a new network we haven't fetched for
+      const networkChanged = lastFetchedNetworkRef.current !== selectedNetwork;
+
+      if (networkChanged) {
+        lastFetchedNetworkRef.current = selectedNetwork;
+        fetchAllNodesData();
+      } else {
+        // Same network - only fetch if there are loading nodes
+        const hasLoadingNodes = nodes.some(n => n.status === 'loading');
+        if (hasLoadingNodes) {
+          fetchAllNodesData();
+        } else {
+        }
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registryStatus, registryPods.length]);
+  }, [registryStatus, registryPods.length, selectedNetwork]);
 
+  // Background preload other networks after initial load completes
+  useEffect(() => {
+    if (registryStatus !== "success" || isLoading) return;
+
+    const preloadOtherNetworks = async () => {
+      const otherNetworks = NETWORK_RPC_ENDPOINTS.filter(n => n.id !== selectedNetwork);
+
+      for (const network of otherNetworks) {
+        // Check if already cached
+        const cached = await getFromDB<NetworkPod[]>(STORES.REGISTRY, cacheKeys.registryPods(network.id));
+        if (cached && cached.length > 0) {
+          continue;
+        }
+
+        // Fetch and cache in background
+        try {
+          const response = await fetch("/api/prpc", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint: network.rpcUrl, method: "get-pods" }),
+          });
+          const res = await response.json();
+
+          if (res.result?.pods && res.result.pods.length > 0) {
+            const sortedPods = res.result.pods.sort((a: NetworkPod, b: NetworkPod) =>
+              b.last_seen_timestamp - a.last_seen_timestamp
+            );
+            await setToDB(STORES.REGISTRY, cacheKeys.registryPods(network.id), sortedPods, CACHE_TTL.REGISTRY_PODS);
+          }
+        } catch (err) {
+        }
+
+        // Small delay between preloads to not overwhelm
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    };
+
+    // Delay preload to not interfere with initial load
+    const timer = setTimeout(preloadOtherNetworks, 3000);
+    return () => clearTimeout(timer);
+  }, [registryStatus, isLoading, selectedNetwork]);
+
+  // Periodic background refresh (every 5 minutes)
+  useEffect(() => {
+    const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+    const backgroundRefresh = async () => {
+      if (isLoading) return;
+
+      // Silently fetch fresh data without showing loading state
+      const network = NETWORK_RPC_ENDPOINTS.find(n => n.id === selectedNetwork);
+      if (!network) return;
+
+      try {
+        const response = await fetch("/api/prpc", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: network.rpcUrl, method: "get-pods" }),
+        });
+        const res = await response.json();
+
+        if (res.result?.pods && res.result.pods.length > 0) {
+          const sortedPods = res.result.pods.sort((a: NetworkPod, b: NetworkPod) =>
+            b.last_seen_timestamp - a.last_seen_timestamp
+          );
+
+          // Update cache
+          await setToDB(STORES.REGISTRY, cacheKeys.registryPods(selectedNetwork), sortedPods, CACHE_TTL.REGISTRY_PODS);
+
+          // Update state if data changed
+          if (sortedPods.length !== registryPods.length) {
+            setRegistryPods(sortedPods);
+            const cachedNodes = await loadCachedNodes(sortedPods);
+            setNodes(cachedNodes);
+          }
+
+          setLastUpdate(new Date());
+        }
+      } catch (err) {
+      }
+    };
+
+    const interval = setInterval(backgroundRefresh, REFRESH_INTERVAL);
+    return () => clearInterval(interval);
+  }, [selectedNetwork, isLoading, registryPods.length, loadCachedNodes]);
 
   // Calculate network stats
   const onlineNodes = nodes.filter((n) => n.status === "online");
@@ -666,7 +899,7 @@ export default function Home() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => fetchRegistryPods(selectedNetwork)}
+          onClick={() => fetchRegistryPods(selectedNetwork, true)}
           disabled={isLoading || registryStatus === "loading"}
         >
           <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
@@ -681,6 +914,11 @@ export default function Home() {
             <span className="flex items-center gap-2">
               <Globe className="w-4 h-4" />
               {currentNetwork.name}
+              {isCached && (
+                <Badge variant="outline" className="text-xs ml-2">
+                  Cached
+                </Badge>
+              )}
               {lastUpdate && (
                 <span className="text-xs text-muted-foreground ml-2">
                   Updated: {lastUpdate.toLocaleTimeString()}
@@ -702,7 +940,7 @@ export default function Home() {
               variant="destructive"
               size="sm"
               className="mt-4"
-              onClick={() => fetchRegistryPods(selectedNetwork)}
+              onClick={() => fetchRegistryPods(selectedNetwork, true)}
             >
               Retry
             </Button>
@@ -829,13 +1067,12 @@ export default function Home() {
 
           {/* Card View */}
           {viewMode === "card" && (
-            <Stagger
-              key={`${statusFilter}-${versionFilter}-${searchQuery}-${sortColumn}-${sortDirection}`}
-              animateOnMount
-              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-            >
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredAndSortedNodes.map((node) => (
-                <StaggerItem key={node.address}>
+                <div
+                  key={node.address}
+                  className="transition-opacity duration-300"
+                >
                   <ScaleOnHover scale={1.01}>
                     <NodeCard
                       node={node}
@@ -846,9 +1083,9 @@ export default function Home() {
                       credits={node.pubkey ? podCredits.get(node.pubkey) : undefined}
                     />
                   </ScaleOnHover>
-                </StaggerItem>
+                </div>
               ))}
-            </Stagger>
+            </div>
           )}
 
           {/* Table View */}
