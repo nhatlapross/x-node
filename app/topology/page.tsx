@@ -355,7 +355,7 @@ export default function TopologyPage() {
       return { globeNodes: [], globeConnections: [] };
     }
 
-    const globeNodes: GlobeNode[] = loadedNodes
+    const globeNodes = loadedNodes
       .map((node) => {
         const ip = node.address.split(':')[0];
         const geo = geolocations.get(ip);
@@ -386,7 +386,7 @@ export default function TopologyPage() {
           pubkey: node.pubkey,
         };
       })
-      .filter((node): node is GlobeNode => node !== null);
+      .filter((node) => node !== null) as GlobeNode[];
 
     const globeConnections: GlobeConnection[] = [];
     const connectionSet = new Set<string>();

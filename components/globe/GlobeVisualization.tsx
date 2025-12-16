@@ -50,7 +50,7 @@ export function GlobeVisualization({
   connections,
   isDark,
 }: GlobeVisualizationProps) {
-  const globeEl = useRef<any>();
+  const globeEl = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -528,7 +528,7 @@ export function GlobeVisualization({
           const geometry = new THREE.BoxGeometry(size, size, size);
           const material = new THREE.MeshBasicMaterial({
             color: node.color,
-            transparent: shouldDim,
+            transparent: shouldDim ?? false,
             opacity: coreOpacity,
           });
           const mesh = new THREE.Mesh(geometry, material);

@@ -1,6 +1,6 @@
 // Geolocation utility for IP addresses
 
-interface GeoLocation {
+export interface GeoLocation {
   lat: number
   lng: number
   city: string

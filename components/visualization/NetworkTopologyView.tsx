@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { NetworkTopology3D } from './NetworkTopology3D'
 import { GlobeVisualization, type GlobeNode, type GlobeConnection } from '../globe'
-import { getGeolocation, batchGeolocate } from '@/lib/geolocation'
+import { batchGeolocate, type GeoLocation } from '@/lib/geolocation'
 
 interface NodeData {
   address: string
@@ -43,43 +43,55 @@ type ViewMode = 'graph' | 'globe'
 export function NetworkTopologyView({ nodes, onNodeClick, isDark = true }: NetworkTopologyViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('graph')
   const [mounted, setMounted] = useState(false)
+  const [geolocations, setGeolocations] = useState<Map<string, GeoLocation>>(new Map())
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
+  // Load geolocations for all node IPs
+  useEffect(() => {
+    const loadedNodes = nodes.filter(n => n.status !== 'loading')
+    const ipAddresses = loadedNodes.map(n => n.address.split(':')[0])
+
+    if (ipAddresses.length === 0) return
+
+    batchGeolocate(ipAddresses).then(setGeolocations)
+  }, [nodes])
+
   // Convert nodes to globe format with geolocation
   const { globeNodes, globeConnections } = useMemo(() => {
-    if (!mounted) return { globeNodes: [], globeConnections: [] }
+    if (!mounted || geolocations.size === 0) {
+      return { globeNodes: [], globeConnections: [] }
+    }
 
     // Filter out loading nodes
     const loadedNodes = nodes.filter(n => n.status !== 'loading')
 
-    // Get IPs from addresses
-    const ipAddresses = loadedNodes.map(n => n.address.split(':')[0])
-
-    // Batch geocode all IPs
-    const geolocations = batchGeolocate(ipAddresses)
-
     // Create globe nodes
-    const globeNodes: GlobeNode[] = loadedNodes.map((node) => {
-      const ip = node.address.split(':')[0]
-      const geo = geolocations.get(ip)!
-      const isOnline = node.status === 'online'
-      const isLatestVersion = node.version?.version === '0.6.0'
+    const globeNodes = loadedNodes
+      .map((node) => {
+        const ip = node.address.split(':')[0]
+        const geo = geolocations.get(ip)
 
-      return {
-        id: node.address,
-        lat: geo.lat,
-        lng: geo.lng,
-        label: node.pubkey ? `${node.pubkey.slice(0, 8)}...` : ip,
-        status: node.status,
-        size: Math.max(0.3, Math.min(1, (node.pods?.total_count || 0) / 10)),
-        color: isOnline
-          ? (isLatestVersion ? '#22c55e' : '#eab308')
-          : '#ef4444',
-      }
-    })
+        if (!geo) return null
+
+        const isOnline = node.status === 'online'
+        const isLatestVersion = node.version?.version === '0.6.0'
+
+        return {
+          id: node.address,
+          lat: geo.lat,
+          lng: geo.lng,
+          label: node.pubkey ? `${node.pubkey.slice(0, 8)}...` : ip,
+          status: node.status,
+          size: Math.max(0.3, Math.min(1, (node.pods?.total_count || 0) / 10)),
+          color: isOnline
+            ? (isLatestVersion ? '#22c55e' : '#eab308')
+            : '#ef4444',
+        }
+      })
+      .filter((node) => node !== null) as GlobeNode[]
 
     // Create globe connections based on pod relationships
     const globeConnections: GlobeConnection[] = []
@@ -129,7 +141,7 @@ export function NetworkTopologyView({ nodes, onNodeClick, isDark = true }: Netwo
     })
 
     return { globeNodes, globeConnections }
-  }, [nodes, mounted])
+  }, [nodes, mounted, geolocations])
 
   // Stats
   const stats = useMemo(() => {

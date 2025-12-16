@@ -112,7 +112,7 @@ interface NetworkTopology3DProps {
 }
 
 export function NetworkTopology3D({ nodes, onNodeClick }: NetworkTopology3DProps) {
-  const fgRef = useRef<any>();
+  const fgRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
