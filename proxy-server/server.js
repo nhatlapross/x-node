@@ -1,6 +1,12 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
+
+// MongoDB and data collector
+const mongodb = require('./lib/mongodb');
+const { startCollector, getLatestData } = require('./lib/dataCollector');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -49,11 +55,12 @@ app.get('/', (req, res) => {
     status: 'ok',
     service: 'Xandeum RPC Proxy',
     endpoints: Object.keys(RPC_ENDPOINTS),
+    features: ['rpc-proxy', 'historical-data', 'charts'],
   });
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy' });
+  res.json({ status: 'healthy', mongodb: mongodb.getDb() ? 'connected' : 'disconnected' });
 });
 
 // Get pods from a network
@@ -294,7 +301,239 @@ app.post('/api/nodes/batch', async (req, res) => {
   res.json({ nodes: results });
 });
 
-app.listen(PORT, () => {
-  console.log(`Xandeum RPC Proxy running on port ${PORT}`);
-  console.log(`Endpoints: ${Object.keys(RPC_ENDPOINTS).join(', ')}`);
+// ============================================
+// Historical Data APIs for Charts
+// ============================================
+
+/**
+ * GET /api/history/network/:network
+ * Get historical data for a specific network
+ * Query params:
+ *   - period: '1h', '6h', '24h', '7d', '30d' (default: '24h')
+ *   - interval: '1m', '5m', '15m', '1h', '6h' (default: '15m')
+ */
+app.get('/api/history/network/:network', async (req, res) => {
+  const { network } = req.params;
+  const { period = '24h', interval = '15m' } = req.query;
+
+  if (!RPC_ENDPOINTS[network]) {
+    return res.status(400).json({ error: `Invalid network: ${network}` });
+  }
+
+  try {
+    const data = await mongodb.getNetworkHistory(network, period, interval);
+    res.json({
+      success: true,
+      network,
+      period,
+      interval,
+      count: data.length,
+      data,
+    });
+  } catch (error) {
+    console.error('[History] Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
 });
+
+/**
+ * GET /api/history/node/:address
+ * Get historical data for a specific node
+ * Query params:
+ *   - period: '1h', '6h', '24h', '7d' (default: '24h')
+ */
+app.get('/api/history/node/:address', async (req, res) => {
+  const { address } = req.params;
+  const { period = '24h' } = req.query;
+
+  try {
+    const data = await mongodb.getNodeHistory(address, period);
+    res.json({
+      success: true,
+      address,
+      period,
+      count: data.length,
+      data,
+    });
+  } catch (error) {
+    console.error('[History] Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/history/stats
+ * Get aggregated stats across all networks
+ * Query params:
+ *   - period: '1h', '24h', '7d' (default: '24h')
+ */
+app.get('/api/history/stats', async (req, res) => {
+  const { period = '24h' } = req.query;
+
+  try {
+    const stats = await mongodb.getAggregatedStats(period);
+    const latestSnapshots = await mongodb.getLatestSnapshots();
+
+    res.json({
+      success: true,
+      period,
+      aggregated: stats,
+      latest: latestSnapshots,
+    });
+  } catch (error) {
+    console.error('[History] Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/history/latest
+ * Get latest cached data from collector (real-time)
+ */
+app.get('/api/history/latest', (req, res) => {
+  const { network } = req.query;
+  const data = getLatestData(network || undefined);
+
+  res.json({
+    success: true,
+    data,
+  });
+});
+
+/**
+ * GET /api/charts/network/:network
+ * Pre-formatted data for frontend charts
+ */
+app.get('/api/charts/network/:network', async (req, res) => {
+  const { network } = req.params;
+  const { period = '24h' } = req.query;
+
+  if (!RPC_ENDPOINTS[network]) {
+    return res.status(400).json({ error: `Invalid network: ${network}` });
+  }
+
+  // Determine interval based on period
+  const intervalMap = {
+    '1h': '1m',
+    '6h': '5m',
+    '24h': '15m',
+    '7d': '1h',
+    '30d': '6h',
+  };
+  const interval = intervalMap[period] || '15m';
+
+  try {
+    const rawData = await mongodb.getNetworkHistory(network, period, interval);
+
+    // Format for recharts
+    const chartData = {
+      nodes: rawData.map(d => ({
+        time: new Date(d.timestamp).getTime(),
+        online: d.onlineNodes,
+        offline: d.offlineNodes,
+        total: d.totalPods,
+      })),
+      resources: rawData.map(d => ({
+        time: new Date(d.timestamp).getTime(),
+        cpu: d.avgCpu,
+        ram: d.avgRam,
+      })),
+      storage: rawData.map(d => ({
+        time: new Date(d.timestamp).getTime(),
+        storage: d.totalStorage,
+        streams: d.totalStreams,
+      })),
+    };
+
+    res.json({
+      success: true,
+      network,
+      period,
+      interval,
+      charts: chartData,
+    });
+  } catch (error) {
+    console.error('[Charts] Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/charts/comparison
+ * Compare multiple networks
+ */
+app.get('/api/charts/comparison', async (req, res) => {
+  const { period = '24h' } = req.query;
+  const networks = Object.keys(RPC_ENDPOINTS);
+
+  // Determine interval based on period
+  const intervalMap = {
+    '1h': '5m',
+    '6h': '15m',
+    '24h': '1h',
+    '7d': '6h',
+  };
+  const interval = intervalMap[period] || '1h';
+
+  try {
+    const comparison = {};
+
+    for (const network of networks) {
+      const rawData = await mongodb.getNetworkHistory(network, period, interval);
+      comparison[network] = rawData.map(d => ({
+        time: new Date(d.timestamp).getTime(),
+        online: d.onlineNodes,
+        total: d.totalPods,
+        avgCpu: d.avgCpu,
+      }));
+    }
+
+    res.json({
+      success: true,
+      period,
+      interval,
+      networks,
+      data: comparison,
+    });
+  } catch (error) {
+    console.error('[Charts] Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// Server Startup
+// ============================================
+
+async function startServer() {
+  // Connect to MongoDB
+  await mongodb.connect();
+
+  // Start data collector (every 5 minutes)
+  const collectorSchedule = process.env.COLLECTOR_SCHEDULE || '*/5 * * * *';
+  startCollector(collectorSchedule);
+
+  // Start Express server
+  app.listen(PORT, () => {
+    console.log(`Xandeum RPC Proxy running on port ${PORT}`);
+    console.log(`Endpoints: ${Object.keys(RPC_ENDPOINTS).join(', ')}`);
+    console.log(`MongoDB: ${mongodb.getDb() ? 'connected' : 'not configured'}`);
+    console.log(`Data collector: ${collectorSchedule}`);
+  });
+}
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\nShutting down...');
+  await mongodb.close();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\nShutting down...');
+  await mongodb.close();
+  process.exit(0);
+});
+
+// Start the server
+startServer().catch(console.error);
