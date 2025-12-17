@@ -1,0 +1,300 @@
+const express = require('express');
+const cors = require('cors');
+const fetch = require('node-fetch');
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+// CORS - allow all origins (or specify your frontend domain)
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+app.use(express.json());
+
+// RPC endpoints configuration
+const RPC_ENDPOINTS = {
+  devnet1: 'https://rpc1.pchednode.com/rpc',
+  devnet2: 'https://rpc2.pchednode.com/rpc',
+  mainnet1: 'https://rpc3.pchednode.com/rpc',
+  mainnet2: 'https://rpc4.pchednode.com/rpc',
+};
+
+// Cache for RPC responses (simple in-memory cache)
+const cache = new Map();
+const CACHE_TTL = 60 * 1000; // 1 minute
+
+function getCached(key) {
+  const item = cache.get(key);
+  if (!item) return null;
+  if (Date.now() > item.expiry) {
+    cache.delete(key);
+    return null;
+  }
+  return item.data;
+}
+
+function setCache(key, data, ttl = CACHE_TTL) {
+  cache.set(key, {
+    data,
+    expiry: Date.now() + ttl,
+  });
+}
+
+// Health check
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'Xandeum RPC Proxy',
+    endpoints: Object.keys(RPC_ENDPOINTS),
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
+// Get pods from a network
+app.get('/api/pods/:network', async (req, res) => {
+  const { network } = req.params;
+  const rpcUrl = RPC_ENDPOINTS[network];
+
+  if (!rpcUrl) {
+    return res.status(400).json({ error: `Invalid network: ${network}` });
+  }
+
+  // Check cache
+  const cacheKey = `pods_${network}`;
+  const cached = getCached(cacheKey);
+  if (cached) {
+    return res.json({ ...cached, cached: true });
+  }
+
+  try {
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'XandeumProxy/1.0',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'get-pods',
+        id: 1,
+      }),
+      timeout: 30000,
+    });
+
+    const data = await response.json();
+
+    if (data.result) {
+      setCache(cacheKey, data.result);
+      res.json(data.result);
+    } else {
+      res.status(500).json({ error: data.error || 'RPC error' });
+    }
+  } catch (error) {
+    console.error(`[${network}] Error:`, error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all networks pods
+app.get('/api/pods', async (req, res) => {
+  const results = {};
+
+  for (const [network, rpcUrl] of Object.entries(RPC_ENDPOINTS)) {
+    const cacheKey = `pods_${network}`;
+    const cached = getCached(cacheKey);
+
+    if (cached) {
+      results[network] = { ...cached, cached: true };
+      continue;
+    }
+
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'XandeumProxy/1.0',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'get-pods',
+          id: 1,
+        }),
+        timeout: 30000,
+      });
+
+      const data = await response.json();
+
+      if (data.result) {
+        setCache(cacheKey, data.result);
+        results[network] = data.result;
+      } else {
+        results[network] = { error: data.error || 'RPC error' };
+      }
+    } catch (error) {
+      console.error(`[${network}] Error:`, error.message);
+      results[network] = { error: error.message };
+    }
+  }
+
+  res.json(results);
+});
+
+// Proxy any RPC call
+app.post('/api/rpc', async (req, res) => {
+  const { endpoint, method, params } = req.body;
+
+  if (!endpoint || !method) {
+    return res.status(400).json({ error: 'Missing endpoint or method' });
+  }
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'XandeumProxy/1.0',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method,
+        params: params || {},
+        id: 1,
+      }),
+      timeout: 10000,
+    });
+
+    const text = await response.text();
+
+    // Check for Cloudflare challenge
+    if (text.includes('Just a moment') || text.includes('cf_chl_opt')) {
+      return res.status(503).json({ error: 'Cloudflare challenge - please try again' });
+    }
+
+    try {
+      const data = JSON.parse(text);
+      res.json(data);
+    } catch {
+      res.status(500).json({ error: 'Invalid JSON response' });
+    }
+  } catch (error) {
+    console.error('[RPC Proxy] Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get node data (version, stats, pods)
+app.get('/api/node/:ip', async (req, res) => {
+  const { ip } = req.params;
+  const port = req.query.port || '6000';
+  const endpoint = `http://${ip}:${port}/rpc`;
+
+  const results = {};
+
+  // Fetch version
+  try {
+    const versionRes = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'get-version', id: 1 }),
+      timeout: 5000,
+    });
+    const versionData = await versionRes.json();
+    results.version = versionData.result;
+  } catch (error) {
+    results.version = null;
+    results.versionError = error.message;
+  }
+
+  // Fetch stats
+  try {
+    const statsRes = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'get-stats', id: 1 }),
+      timeout: 5000,
+    });
+    const statsData = await statsRes.json();
+    results.stats = statsData.result;
+  } catch (error) {
+    results.stats = null;
+    results.statsError = error.message;
+  }
+
+  // Fetch pods/peers
+  try {
+    const podsRes = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'get-pods', id: 1 }),
+      timeout: 5000,
+    });
+    const podsData = await podsRes.json();
+    results.pods = podsData.result;
+  } catch (error) {
+    results.pods = null;
+    results.podsError = error.message;
+  }
+
+  results.status = results.version ? 'online' : 'offline';
+  res.json(results);
+});
+
+// Batch get multiple nodes
+app.post('/api/nodes/batch', async (req, res) => {
+  const { addresses } = req.body;
+
+  if (!addresses || !Array.isArray(addresses)) {
+    return res.status(400).json({ error: 'Missing addresses array' });
+  }
+
+  const results = await Promise.all(
+    addresses.slice(0, 20).map(async (address) => { // Limit to 20 nodes per batch
+      const [ip, port = '6000'] = address.split(':');
+      const endpoint = `http://${ip}:${port}/rpc`;
+
+      try {
+        const [versionRes, statsRes] = await Promise.all([
+          fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', method: 'get-version', id: 1 }),
+            timeout: 5000,
+          }).then(r => r.json()).catch(() => null),
+          fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', method: 'get-stats', id: 1 }),
+            timeout: 5000,
+          }).then(r => r.json()).catch(() => null),
+        ]);
+
+        return {
+          address,
+          status: versionRes?.result ? 'online' : 'offline',
+          version: versionRes?.result || null,
+          stats: statsRes?.result || null,
+        };
+      } catch (error) {
+        return {
+          address,
+          status: 'offline',
+          error: error.message,
+        };
+      }
+    })
+  );
+
+  res.json({ nodes: results });
+});
+
+app.listen(PORT, () => {
+  console.log(`Xandeum RPC Proxy running on port ${PORT}`);
+  console.log(`Endpoints: ${Object.keys(RPC_ENDPOINTS).join(', ')}`);
+});
