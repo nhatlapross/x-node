@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Globe,
   Network,
+  Trophy,
 } from "lucide-react";
 import { DashboardLayout, PageHeader, type NavSection } from "@/components/layout";
 import { Logo, LogoIcon } from "@/components/common";
@@ -113,6 +114,7 @@ const navSections: NavSection[] = [
     title: "Overview",
     items: [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
+      { label: "Leaderboard", href: "/leaderboard", icon: Trophy },
       { label: "Activity", href: "/activity", icon: Activity },
     ],
   },

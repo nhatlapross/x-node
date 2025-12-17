@@ -19,6 +19,7 @@ import {
   Droplets,
   BarChart3,
   PieChart as PieChartIcon,
+  Trophy,
 } from "lucide-react";
 import {
   AreaChart,
@@ -70,6 +71,7 @@ const navSections: NavSection[] = [
     title: "Overview",
     items: [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
+      { label: "Leaderboard", href: "/leaderboard", icon: Trophy },
       { label: "Activity", href: "/activity", icon: Activity },
     ],
   },

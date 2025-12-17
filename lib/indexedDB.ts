@@ -1,7 +1,7 @@
 // IndexedDB-based caching for node data with TTL support
 
 const DB_NAME = 'xnode_cache'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 // Store names
 export const STORES = {
@@ -9,6 +9,7 @@ export const STORES = {
   REGISTRY: 'registry',
   GEOLOCATION: 'geolocation',
   META: 'meta',
+  FAVORITES: 'favorites',
 } as const
 
 // TTL constants (in milliseconds)
@@ -69,6 +70,9 @@ function initDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORES.META)) {
         db.createObjectStore(STORES.META, { keyPath: 'key' })
+      }
+      if (!db.objectStoreNames.contains(STORES.FAVORITES)) {
+        db.createObjectStore(STORES.FAVORITES, { keyPath: 'key' })
       }
     }
   })
@@ -298,4 +302,5 @@ export const cacheKeys = {
   nodeData: (address: string) => `node_${address}`,
   geolocation: (ip: string) => `geo_${ip}`,
   lastUpdate: (network: string) => `lastUpdate_${network}`,
+  favorite: (pubkey: string) => `fav_${pubkey}`,
 }

@@ -67,8 +67,8 @@ export function NetworkStats({
     <>
       <Stagger animateOnMount className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StaggerItem>
-          <ScaleOnHover>
-            <BracketCard className="p-4 bg-card">
+          <ScaleOnHover className="h-full">
+            <BracketCard className="p-4 bg-card h-full">
               <div className="flex items-center gap-2 mb-2">
                 <Server className="w-4 h-4 text-primary" />
                 <span className="text-xs uppercase tracking-widest text-muted-foreground">Nodes Online</span>
@@ -85,21 +85,21 @@ export function NetworkStats({
         </StaggerItem>
 
         <StaggerItem>
-          <ScaleOnHover>
-            <BracketCard className="p-4 bg-card">
+          <ScaleOnHover className="h-full">
+            <BracketCard className="p-4 bg-card h-full">
               <div className="flex items-center gap-2 mb-2">
                 <HardDrive className="w-4 h-4 text-primary" />
                 <span className="text-xs uppercase tracking-widest text-muted-foreground">Total Storage</span>
               </div>
               <p className="text-3xl font-light font-mono">{formatBytes(totalStorage)}</p>
-              <div className="mt-2 h-2" />
+              <DotProgress percent={0} className="mt-2 opacity-0" />
             </BracketCard>
           </ScaleOnHover>
         </StaggerItem>
 
         <StaggerItem>
-          <ScaleOnHover>
-            <BracketCard className="p-4 bg-card">
+          <ScaleOnHover className="h-full">
+            <BracketCard className="p-4 bg-card h-full">
               <div className="flex items-center gap-2 mb-2">
                 <Cpu className="w-4 h-4 text-primary" />
                 <span className="text-xs uppercase tracking-widest text-muted-foreground">Avg CPU</span>
@@ -111,8 +111,8 @@ export function NetworkStats({
         </StaggerItem>
 
         <StaggerItem>
-          <ScaleOnHover>
-            <BracketCard className="p-4 bg-card">
+          <ScaleOnHover className="h-full">
+            <BracketCard className="p-4 bg-card h-full">
               <div className="flex items-center gap-2 mb-2">
                 <Activity className="w-4 h-4 text-primary" />
                 <span className="text-xs uppercase tracking-widest text-muted-foreground">Avg RAM</span>
@@ -126,21 +126,25 @@ export function NetworkStats({
 
       {/* Version Stats - Dynamic */}
       <Stagger animateOnMount className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-        <StaggerItem>
-          <BracketCard className="p-4 bg-card">
+        <StaggerItem className="h-full">
+          <BracketCard className="p-4 bg-card h-full flex flex-col">
             <div className="flex items-center gap-2 mb-2">
               <Users className="w-4 h-4 text-muted-foreground" />
               <span className="text-xs uppercase tracking-widest text-muted-foreground">Registered</span>
             </div>
             <p className="text-2xl font-light font-mono">{registryPods.length}</p>
+            <div className="text-xs text-muted-foreground mt-1">
+              Total pods in registry
+            </div>
+            <div className="text-xs mt-1 invisible">placeholder</div>
           </BracketCard>
         </StaggerItem>
 
         {/* Latest Version - Dynamic */}
-        <StaggerItem>
-          <BracketCard className="p-4 bg-card">
-            <div className="flex items-center gap-2 mb-1">
-              <CheckCircle className="w-3 h-3 text-green-500" />
+        <StaggerItem className="h-full">
+          <BracketCard className="p-4 bg-card h-full flex flex-col">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle className="w-4 h-4 text-green-500" />
               <span className="text-xs uppercase tracking-widest text-muted-foreground">
                 Latest {versionStats.latestVersion ? `v${versionStats.latestVersion}` : ''}
               </span>
@@ -148,40 +152,39 @@ export function NetworkStats({
             <p className="text-2xl font-light font-mono text-green-500">
               {versionStats.latestCount}
             </p>
-            {registryPods.length > 0 && (
-              <div className="text-xs text-muted-foreground mt-1">
-                {((versionStats.latestCount / registryPods.length) * 100).toFixed(0)}% updated
-              </div>
-            )}
+            <div className="text-xs text-muted-foreground mt-1">
+              {registryPods.length > 0 ? `${((versionStats.latestCount / registryPods.length) * 100).toFixed(0)}% updated` : 'No pods'}
+            </div>
+            <div className="text-xs mt-1 invisible">placeholder</div>
           </BracketCard>
         </StaggerItem>
 
         {/* Outdated Versions - Dynamic - Clickable */}
-        <StaggerItem>
-          <ScaleOnHover>
+        <StaggerItem className="h-full">
+          <ScaleOnHover className="h-full">
             <BracketCard
-              className="p-4 bg-card cursor-pointer hover:border-yellow-500/50 transition-colors"
+              className="p-4 bg-card cursor-pointer hover:border-yellow-500/50 transition-colors h-full flex flex-col"
               onClick={() => setShowVersionChart(true)}
             >
-              <div className="flex items-center gap-2 mb-1">
-                <AlertCircle className="w-3 h-3 text-yellow-500" />
+              <div className="flex items-center gap-2 mb-2">
+                <AlertCircle className="w-4 h-4 text-yellow-500" />
                 <span className="text-xs uppercase tracking-widest text-muted-foreground">Outdated</span>
               </div>
               <p className="text-2xl font-light font-mono text-yellow-500">
                 {versionStats.outdatedCount}
               </p>
-              {versionStats.topVersions.length > 1 && (
-                <div className="text-xs text-muted-foreground mt-1 truncate">
-                  {versionStats.topVersions.slice(1, 3).map(v => `v${v.version} (${v.count})`).join(', ')}
-                </div>
-              )}
+              <div className="text-xs text-muted-foreground mt-1 truncate">
+                {versionStats.topVersions.length > 1
+                  ? versionStats.topVersions.slice(1, 3).map(v => `v${v.version} (${v.count})`).join(', ')
+                  : 'All on latest version'}
+              </div>
               <div className="text-xs text-primary/70 mt-1">Click for details</div>
             </BracketCard>
           </ScaleOnHover>
         </StaggerItem>
 
-        <StaggerItem>
-          <BracketCard className="p-4 bg-card">
+        <StaggerItem className="h-full">
+          <BracketCard className="p-4 bg-card h-full flex flex-col">
             <div className="flex items-center gap-2 mb-2">
               <Coins className="w-4 h-4 text-success" />
               <span className="text-xs uppercase tracking-widest text-muted-foreground">Total Credits</span>
@@ -189,6 +192,10 @@ export function NetworkStats({
             <p className="text-2xl font-light font-mono text-success">
               {totalCredits.toLocaleString()}
             </p>
+            <div className="text-xs text-muted-foreground mt-1">
+              Network reputation
+            </div>
+            <div className="text-xs mt-1 invisible">placeholder</div>
           </BracketCard>
         </StaggerItem>
       </Stagger>
