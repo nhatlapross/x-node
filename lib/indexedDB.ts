@@ -18,6 +18,7 @@ export const CACHE_TTL = {
   REGISTRY_PODS: 5 * 60 * 1000,    // 5 minutes
   GEOLOCATION: 24 * 60 * 60 * 1000, // 24 hours
   BACKGROUND_REFRESH: 5 * 60 * 1000, // 5 minutes - interval for background updates
+  ACTIVITY_DATA: 2 * 60 * 1000,    // 2 minutes - activity/solscan data
 } as const
 
 interface CacheEntry<T> {
@@ -303,4 +304,10 @@ export const cacheKeys = {
   geolocation: (ip: string) => `geo_${ip}`,
   lastUpdate: (network: string) => `lastUpdate_${network}`,
   favorite: (pubkey: string) => `fav_${pubkey}`,
+  activityMeta: () => 'activity_meta',
+  activityTransfers: () => 'activity_transfers',
+  activityHolders: () => 'activity_holders',
+  activityDefi: () => 'activity_defi',
+  activityMarkets: () => 'activity_markets',
+  activityPriceHistory: () => 'activity_price_history',
 }

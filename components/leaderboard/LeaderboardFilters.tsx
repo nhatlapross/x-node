@@ -1,11 +1,10 @@
 'use client'
 
-import { Search, Star, GitCompare, LayoutGrid, List } from 'lucide-react'
+import { Search, Star, GitCompare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 export type TimeRange = '24h' | '7d' | '30d' | 'all'
-export type ViewMode = 'table' | 'cards'
 
 interface LeaderboardFiltersProps {
   timeRange: TimeRange
@@ -14,8 +13,6 @@ interface LeaderboardFiltersProps {
   setSearchQuery: (query: string) => void
   showFavoritesOnly: boolean
   setShowFavoritesOnly: (show: boolean) => void
-  viewMode: ViewMode
-  setViewMode: (mode: ViewMode) => void
   compareMode: boolean
   setCompareMode: (mode: boolean) => void
   selectedCount: number
@@ -35,8 +32,6 @@ export function LeaderboardFilters({
   setSearchQuery,
   showFavoritesOnly,
   setShowFavoritesOnly,
-  viewMode,
-  setViewMode,
   compareMode,
   setCompareMode,
   selectedCount,
@@ -99,32 +94,6 @@ export function LeaderboardFilters({
           </span>
         )}
       </Button>
-
-      {/* View Mode */}
-      <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-lg">
-        <button
-          onClick={() => setViewMode('table')}
-          className={cn(
-            'p-1.5 rounded transition-all',
-            viewMode === 'table'
-              ? 'bg-primary text-primary-foreground'
-              : 'text-muted-foreground hover:text-foreground'
-          )}
-        >
-          <List className="w-4 h-4" />
-        </button>
-        <button
-          onClick={() => setViewMode('cards')}
-          className={cn(
-            'p-1.5 rounded transition-all',
-            viewMode === 'cards'
-              ? 'bg-primary text-primary-foreground'
-              : 'text-muted-foreground hover:text-foreground'
-          )}
-        >
-          <LayoutGrid className="w-4 h-4" />
-        </button>
-      </div>
     </div>
   )
 }

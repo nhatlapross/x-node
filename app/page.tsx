@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { batchGeolocate } from "@/lib/geolocation";
 import { getFromDB, setToDB, getAllFromDB, STORES, CACHE_TTL, cacheKeys } from "@/lib/indexedDB";
 import { PROXY_URL, USE_PROXY, proxyEndpoints } from "@/lib/proxyConfig";
+import { useNodes as useNodesContext, NETWORK_RPC_ENDPOINTS as NETWORK_ENDPOINTS } from "@/contexts/NodesContext";
 
 // Types based on pRPC API documentation
 interface VersionResponse {

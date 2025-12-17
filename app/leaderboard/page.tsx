@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   LayoutDashboard,
   Server,
@@ -9,7 +9,7 @@ import {
   Trophy,
   Network,
 } from "lucide-react";
-import { DashboardLayout, PageHeader, ContentSection, type NavSection } from "@/components/layout";
+import { DashboardLayout, PageHeader, type NavSection } from "@/components/layout";
 import { Logo, LogoIcon, FadeIn, BracketCard } from "@/components/common";
 import {
   LeaderboardTable,
@@ -17,75 +17,13 @@ import {
   ComparisonPanel,
   RankBadge,
   type TimeRange,
-  type ViewMode,
 } from "@/components/leaderboard";
 import { NodeDetailPanel } from "@/components/dashboard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { batchGeolocate } from "@/lib/geolocation";
 import { getFavorites, toggleFavorite } from "@/lib/favorites";
-import { PROXY_URL, USE_PROXY, proxyEndpoints } from "@/lib/proxyConfig";
-
-// Types
-interface VersionResponse {
-  version: string;
-}
-
-interface StatsResponse {
-  active_streams: number;
-  cpu_percent: number;
-  current_index: number;
-  file_size: number;
-  last_updated: number;
-  packets_received: number;
-  packets_sent: number;
-  ram_total: number;
-  ram_used: number;
-  total_bytes: number;
-  total_pages: number;
-  uptime: number;
-}
-
-interface NodeData {
-  ip: string;
-  address: string;
-  label: string;
-  pubkey: string | null;
-  registryVersion: string;
-  status: "online" | "offline" | "loading";
-  version?: VersionResponse;
-  stats?: StatsResponse;
-  error?: string;
-  lastFetched?: number;
-  location?: {
-    city: string;
-    country: string;
-    countryCode?: string;
-  };
-}
-
-interface NetworkPod {
-  address: string;
-  last_seen_timestamp: number;
-  pubkey: string | null;
-  version: string;
-}
-
-interface NetworkPodsResponse {
-  pods: NetworkPod[];
-  total_count: number;
-}
-
-interface PodCredit {
-  pod_id: string;
-  credits: number;
-}
-
-interface PodCreditsResponse {
-  pods_credits: PodCredit[];
-  status: string;
-}
+import { useNodes, NETWORK_RPC_ENDPOINTS, type NodeData } from "@/contexts/NodesContext";
 
 interface LeaderboardEntry {
   node: NodeData;
@@ -115,21 +53,6 @@ function formatTimestamp(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleString();
 }
 
-// Network config
-interface NetworkConfig {
-  id: string;
-  name: string;
-  rpcUrl: string;
-  type: "devnet" | "mainnet";
-}
-
-const NETWORK_RPC_ENDPOINTS: NetworkConfig[] = [
-  { id: "devnet1", name: "Devnet 1", rpcUrl: "https://rpc1.pchednode.com/rpc", type: "devnet" },
-  { id: "devnet2", name: "Devnet 2", rpcUrl: "https://rpc2.pchednode.com/rpc", type: "devnet" },
-  { id: "mainnet1", name: "Mainnet 1", rpcUrl: "https://rpc3.pchednode.com/rpc", type: "mainnet" },
-  { id: "mainnet2", name: "Mainnet 2", rpcUrl: "https://rpc4.pchednode.com/rpc", type: "mainnet" },
-];
-
 // Navigation
 const navSections: NavSection[] = [
   {
@@ -150,13 +73,17 @@ const navSections: NavSection[] = [
 ];
 
 export default function LeaderboardPage() {
-  // Network state
-  const [selectedNetwork, setSelectedNetwork] = useState<string>("devnet1");
-  const [nodes, setNodes] = useState<NodeData[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Pod credits
-  const [podCredits, setPodCredits] = useState<Map<string, number>>(new Map());
+  // Use shared context for nodes and credits data
+  const {
+    selectedNetwork,
+    setSelectedNetwork,
+    currentNetwork,
+    nodes,
+    podCredits,
+    isLoading,
+    refreshData,
+    refreshPodCredits,
+  } = useNodes();
 
   // Favorites
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
@@ -165,7 +92,6 @@ export default function LeaderboardPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("table");
 
   // Compare mode
   const [compareMode, setCompareMode] = useState(false);
@@ -178,176 +104,6 @@ export default function LeaderboardPage() {
   useEffect(() => {
     getFavorites().then(setFavorites);
   }, []);
-
-  // Call RPC endpoint
-  const callRpcEndpoint = useCallback(async (
-    rpcUrl: string,
-    method: string
-  ): Promise<{ result?: unknown; error?: string }> => {
-    if (USE_PROXY && PROXY_URL) {
-      try {
-        const response = await fetch(proxyEndpoints.rpc(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ endpoint: rpcUrl, method }),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.result) return { result: data.result };
-          if (data.error) return { error: data.error };
-        }
-      } catch {
-        // Continue to fallback
-      }
-    }
-
-    const payload = { jsonrpc: "2.0", method, id: 1 };
-    try {
-      const response = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (data.result) return { result: data.result };
-        if (data.error) return { error: data.error };
-      }
-    } catch {
-      // Try local proxy
-    }
-
-    try {
-      const response = await fetch("/api/prpc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endpoint: rpcUrl, method }),
-      });
-      if (!response.ok) return { error: `HTTP ${response.status}` };
-      const data = await response.json();
-      if (data.error) return { error: data.error };
-      return { result: data.result };
-    } catch (e) {
-      return { error: e instanceof Error ? e.message : "Unknown error" };
-    }
-  }, []);
-
-  // Fetch pod credits
-  const fetchPodCredits = useCallback(async () => {
-    try {
-      const response = await fetch("/api/pod-credits");
-      if (!response.ok) return;
-      const data: PodCreditsResponse = await response.json();
-      if (data.status === "success" && data.pods_credits) {
-        const creditsMap = new Map<string, number>();
-        data.pods_credits.forEach(pc => creditsMap.set(pc.pod_id, pc.credits));
-        setPodCredits(creditsMap);
-      }
-    } catch {
-      // Ignore
-    }
-  }, []);
-
-  // Call node API
-  const callApi = async (ip: string, method: string): Promise<{ result?: unknown; error?: string }> => {
-    try {
-      const response = await fetch("/api/prpc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endpoint: `http://${ip}:6000/rpc`, method }),
-      });
-      if (!response.ok) return { error: `HTTP ${response.status}` };
-      const data = await response.json();
-      if (data.error) return { error: data.error };
-      return { result: data.result };
-    } catch (e) {
-      return { error: e instanceof Error ? e.message : "Unknown error" };
-    }
-  };
-
-  // Fetch all data
-  const fetchData = useCallback(async () => {
-    setIsLoading(true);
-
-    const network = NETWORK_RPC_ENDPOINTS.find(n => n.id === selectedNetwork);
-    if (!network) return;
-
-    // Fetch registry pods
-    const res = await callRpcEndpoint(network.rpcUrl, "get-pods");
-    if (res.error || !res.result) {
-      setIsLoading(false);
-      return;
-    }
-
-    const data = res.result as NetworkPodsResponse;
-    if (!data.pods || data.pods.length === 0) {
-      setIsLoading(false);
-      return;
-    }
-
-    // Initialize nodes
-    const initialNodes: NodeData[] = data.pods.map((pod, idx) => ({
-      ip: pod.address.split(":")[0],
-      address: pod.address,
-      label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
-      pubkey: pod.pubkey,
-      registryVersion: pod.version,
-      status: "loading" as const,
-    }));
-    setNodes(initialNodes);
-
-    // Fetch node details in batches
-    const BATCH_SIZE = 10;
-    for (let i = 0; i < data.pods.length; i += BATCH_SIZE) {
-      const batch = data.pods.slice(i, i + BATCH_SIZE);
-      await Promise.all(batch.map(async (pod, batchIdx) => {
-        const idx = i + batchIdx;
-        const ip = pod.address.split(":")[0];
-
-        const [versionRes, statsRes] = await Promise.all([
-          callApi(ip, "get-version"),
-          callApi(ip, "get-stats"),
-        ]);
-
-        const nodeData: NodeData = {
-          ip,
-          address: pod.address,
-          label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
-          pubkey: pod.pubkey,
-          registryVersion: pod.version,
-          status: versionRes.error && statsRes.error ? "offline" : "online",
-          version: versionRes.result as VersionResponse | undefined,
-          stats: statsRes.result as StatsResponse | undefined,
-          error: versionRes.error || statsRes.error,
-        };
-
-        setNodes(prev => prev.map(n => n.address === pod.address ? nodeData : n));
-      }));
-    }
-
-    // Fetch geolocation
-    const loadedNodes = initialNodes.filter(n => n.status !== 'loading');
-    if (loadedNodes.length > 0) {
-      const ips = loadedNodes.map(n => n.address.split(':')[0]);
-      const geoResults = await batchGeolocate(ips);
-      setNodes(prev => prev.map(node => {
-        const ip = node.address.split(':')[0];
-        const geo = geoResults.get(ip);
-        if (geo) {
-          return { ...node, location: { city: geo.city, country: geo.country, countryCode: geo.countryCode } };
-        }
-        return node;
-      }));
-    }
-
-    setIsLoading(false);
-  }, [selectedNetwork, callRpcEndpoint]);
-
-  // Initial fetch
-  useEffect(() => {
-    fetchData();
-    fetchPodCredits();
-  }, [fetchData, fetchPodCredits]);
 
   // Handle favorite toggle
   const handleToggleFavorite = async (node: NodeData) => {
@@ -455,7 +211,7 @@ export default function LeaderboardPage() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => { fetchData(); fetchPodCredits(); }}
+          onClick={() => { refreshData(true); refreshPodCredits(); }}
           disabled={isLoading}
         >
           <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
@@ -526,8 +282,6 @@ export default function LeaderboardPage() {
         setSearchQuery={setSearchQuery}
         showFavoritesOnly={showFavoritesOnly}
         setShowFavoritesOnly={setShowFavoritesOnly}
-        viewMode={viewMode}
-        setViewMode={setViewMode}
         compareMode={compareMode}
         setCompareMode={setCompareMode}
         selectedCount={selectedForCompare.size}
