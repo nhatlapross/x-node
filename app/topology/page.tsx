@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Globe,
   Network,
+  Trophy,
 } from "lucide-react";
 import { DashboardLayout, PageHeader, type NavSection } from "@/components/layout";
 import { Logo, LogoIcon } from "@/components/common";
@@ -17,10 +18,9 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 import { batchGeolocate } from "@/lib/geolocation";
-import { getFromDB, setToDB, getAllFromDB, STORES, CACHE_TTL, cacheKeys } from "@/lib/indexedDB";
-import { PROXY_URL, USE_PROXY, proxyEndpoints } from "@/lib/proxyConfig";
 import { findLatestVersion, getVersionColor } from "@/lib/version";
 import type { GlobeNode, GlobeConnection } from "@/components/globe";
+import { useNodes, NETWORK_RPC_ENDPOINTS, type NodeData as ContextNodeData } from "@/contexts/NodesContext";
 
 // Dynamic import to avoid SSR issues
 const GlobeVisualization = dynamic(
@@ -82,37 +82,13 @@ interface NodeData {
   lastFetched?: number;
 }
 
-interface NetworkConfig {
-  id: string;
-  name: string;
-  rpcUrl: string;
-  type: "devnet" | "mainnet";
-}
-
-const NETWORK_RPC_ENDPOINTS: NetworkConfig[] = [
-  { id: "devnet1", name: "Devnet 1", rpcUrl: "https://rpc1.pchednode.com/rpc", type: "devnet" },
-  { id: "devnet2", name: "Devnet 2", rpcUrl: "https://rpc2.pchednode.com/rpc", type: "devnet" },
-  { id: "mainnet1", name: "Mainnet 1", rpcUrl: "https://rpc3.pchednode.com/rpc", type: "mainnet" },
-  { id: "mainnet2", name: "Mainnet 2", rpcUrl: "https://rpc4.pchednode.com/rpc", type: "mainnet" },
-];
-
-interface NetworkPod {
-  address: string;
-  last_seen_timestamp: number;
-  pubkey: string | null;
-  version: string;
-}
-
-interface NetworkPodsResponse {
-  pods: NetworkPod[];
-  total_count: number;
-}
 
 const navSections: NavSection[] = [
   {
     title: "Overview",
     items: [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
+      { label: "Leaderboard", href: "/leaderboard", icon: Trophy },
       { label: "Activity", href: "/activity", icon: Activity },
     ],
   },
@@ -126,17 +102,25 @@ const navSections: NavSection[] = [
 ];
 
 export default function TopologyPage() {
-  const [selectedNetwork, setSelectedNetwork] = useState<string>("devnet1");
-  const [registryPods, setRegistryPods] = useState<NetworkPod[]>([]);
-  const [registryStatus, setRegistryStatus] = useState<"loading" | "success" | "error">("loading");
-  const [registryError, setRegistryError] = useState<string | null>(null);
-  const [nodes, setNodes] = useState<NodeData[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [isCached, setIsCached] = useState(false);
-  const [isDark, setIsDark] = useState(false);
+  // Use shared context for nodes data
+  const {
+    selectedNetwork,
+    setSelectedNetwork,
+    currentNetwork,
+    nodes: contextNodes,
+    registryPods,
+    isLoading,
+    registryStatus,
+    registryError,
+    lastUpdate,
+    isCached,
+    refreshData,
+  } = useNodes();
 
-  const currentNetwork = NETWORK_RPC_ENDPOINTS.find(n => n.id === selectedNetwork)!;
+  // Map context nodes to local NodeData type (they're compatible)
+  const nodes = contextNodes as NodeData[];
+
+  const [isDark, setIsDark] = useState(false);
 
   // Detect theme
   useEffect(() => {
@@ -154,378 +138,7 @@ export default function TopologyPage() {
     return () => observer.disconnect();
   }, []);
 
-  const callApi = async (
-    ip: string,
-    method: string
-  ): Promise<{ result?: unknown; error?: string }> => {
-    try {
-      const response = await fetch("/api/prpc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint: `http://${ip}:6000/rpc`,
-          method,
-        }),
-      });
-      if (!response.ok) {
-        return { error: `HTTP ${response.status}` };
-      }
-      const data = await response.json();
-      if (data.error) return { error: data.error };
-      return { result: data.result };
-    } catch (e) {
-      return { error: e instanceof Error ? e.message : "Unknown error" };
-    }
-  };
-
-  // Call RPC endpoint - use external proxy if configured, otherwise try direct/fallback
-  const callRpcEndpoint = useCallback(async (
-    rpcUrl: string,
-    method: string
-  ): Promise<{ result?: unknown; error?: string }> => {
-    // If external proxy is configured, use it (bypasses Cloudflare)
-    if (USE_PROXY && PROXY_URL) {
-      try {
-        const response = await fetch(proxyEndpoints.rpc(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ endpoint: rpcUrl, method }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.result) {
-            return { result: data.result };
-          }
-          if (data.error) {
-            return { error: data.error };
-          }
-        }
-      } catch {
-        // External proxy failed, continue to fallback
-      }
-    }
-
-    const payload = {
-      jsonrpc: "2.0",
-      method: method,
-      id: 1,
-    };
-
-    // Try direct fetch from browser (can bypass Cloudflare JS challenge)
-    try {
-      const response = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.result) {
-          return { result: data.result };
-        }
-        if (data.error) {
-          return { error: data.error };
-        }
-      }
-    } catch {
-      // Direct fetch failed (CORS or network error), try local proxy
-    }
-
-    // Fallback to local server proxy
-    try {
-      const response = await fetch("/api/prpc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint: rpcUrl,
-          method,
-        }),
-      });
-      if (!response.ok) {
-        return { error: `HTTP ${response.status}` };
-      }
-      const data = await response.json();
-      if (data.error) return { error: data.error };
-      return { result: data.result };
-    } catch (e) {
-      return { error: e instanceof Error ? e.message : "Unknown error" };
-    }
-  }, []);
-
-  // Load cached node data for pods from IndexedDB
-  const loadCachedNodes = useCallback(async (pods: NetworkPod[]): Promise<NodeData[]> => {
-    // Get all cached nodes at once for better performance
-    const cachedNodes = await getAllFromDB<NodeData>(STORES.NODES);
-
-    return pods.map((pod, idx) => {
-      const cacheKey = cacheKeys.nodeData(pod.address);
-      const cached = cachedNodes.get(cacheKey);
-      if (cached && cached.status !== 'loading') {
-        return cached;
-      }
-      return {
-        ip: pod.address.split(":")[0],
-        address: pod.address,
-        label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
-        pubkey: pod.pubkey,
-        registryVersion: pod.version,
-        status: "loading" as const,
-      };
-    });
-  }, []);
-
-  const fetchRegistryPods = useCallback(async (networkId: string, skipCache: boolean = false) => {
-    const network = NETWORK_RPC_ENDPOINTS.find(n => n.id === networkId);
-    if (!network) return;
-
-    setRegistryError(null);
-
-    // Try IndexedDB cache first for instant display
-    if (!skipCache) {
-      try {
-        const cachedPods = await getFromDB<NetworkPod[]>(STORES.REGISTRY, cacheKeys.registryPods(networkId));
-        if (cachedPods && cachedPods.length > 0) {
-          setRegistryPods(cachedPods);
-          setRegistryStatus("success");
-          setIsCached(true);
-          try {
-            const cachedNodes = await loadCachedNodes(cachedPods);
-            setNodes(cachedNodes);
-
-            // Count how many are already loaded
-            const loadedCount = cachedNodes.filter(n => n.status !== 'loading').length;
-
-            // If all nodes are cached, set lastUpdate
-            if (loadedCount === cachedNodes.length) {
-              setLastUpdate(new Date());
-            }
-          } catch (err) {
-          }
-        }
-      } catch (err) {
-      }
-    }
-
-    // Fetch fresh data
-    const res = await callRpcEndpoint(network.rpcUrl, "get-pods");
-
-    if (res.error) {
-      if (skipCache || registryPods.length === 0) {
-        setRegistryStatus("error");
-        setRegistryError(res.error);
-        setRegistryPods([]);
-      }
-      return;
-    }
-
-    const data = res.result as NetworkPodsResponse;
-    if (!data.pods || data.pods.length === 0) {
-      if (skipCache || registryPods.length === 0) {
-        setRegistryStatus("error");
-        setRegistryError("No pods found in registry");
-        setRegistryPods([]);
-      }
-      return;
-    }
-
-    const sortedPods = data.pods.sort((a, b) => b.last_seen_timestamp - a.last_seen_timestamp);
-
-    // Set state FIRST to ensure UI updates
-    setRegistryPods(sortedPods);
-    setRegistryStatus("success");
-    setIsCached(false);
-
-    // Cache the registry pods to IndexedDB (don't await, do in background)
-    setToDB(STORES.REGISTRY, cacheKeys.registryPods(networkId), sortedPods, CACHE_TTL.REGISTRY_PODS)
-
-    // Initialize nodes with cached data if available
-    try {
-      const initialNodes = await loadCachedNodes(sortedPods);
-      setNodes(initialNodes);
-    } catch (err) {
-      // Fallback: create loading nodes
-      const loadingNodes = sortedPods.map((pod, idx) => ({
-        ip: pod.address.split(":")[0],
-        address: pod.address,
-        label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
-        pubkey: pod.pubkey,
-        registryVersion: pod.version,
-        status: "loading" as const,
-      }));
-      setNodes(loadingNodes);
-    }
-  }, [loadCachedNodes, registryPods.length]);
-
-  const fetchNodeDataAndUpdate = useCallback(async (pod: NetworkPod, index: number) => {
-    const ip = pod.address.split(":")[0];
-    const baseData: NodeData = {
-      ip,
-      address: pod.address,
-      label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${index + 1}`,
-      pubkey: pod.pubkey,
-      registryVersion: pod.version,
-      status: "loading",
-    };
-
-    const [versionRes, statsRes, podsRes] = await Promise.all([
-      callApi(ip, "get-version"),
-      callApi(ip, "get-stats"),
-      callApi(ip, "get-pods"),
-    ]);
-
-    const isOffline = versionRes.error && statsRes.error;
-
-    const fullResult: NodeData = {
-      ...baseData,
-      status: isOffline ? "offline" : "online",
-      version: versionRes.result as VersionResponse | undefined,
-      stats: statsRes.result as StatsResponse | undefined,
-      pods: podsRes.result as PodsResponse | undefined,
-      error: isOffline ? (versionRes.error || statsRes.error) : undefined,
-      lastFetched: Date.now(),
-    };
-
-    // Cache the result to IndexedDB
-    setToDB(STORES.NODES, cacheKeys.nodeData(pod.address), fullResult, CACHE_TTL.NODE_DATA);
-    setNodes(prev => prev.map(n => n.address === pod.address ? fullResult : n));
-    return fullResult;
-  }, []);
-
-  const fetchAllNodesData = useCallback(async (forceRefresh: boolean = false) => {
-    if (registryPods.length === 0) return;
-
-    // Get cached nodes from IndexedDB to determine which need fetching
-    const cachedNodes = await getAllFromDB<NodeData>(STORES.NODES);
-
-    // Filter to only fetch nodes that need updating
-    const podsToFetch = forceRefresh
-      ? registryPods
-      : registryPods.filter((pod) => {
-          const cacheKey = cacheKeys.nodeData(pod.address);
-          const cached = cachedNodes.get(cacheKey);
-          return !cached || cached.status === 'loading';
-        });
-
-    if (podsToFetch.length === 0) {
-      setLastUpdate(new Date());
-      return;
-    }
-
-    setIsLoading(true);
-
-    // Increased batch size for faster loading
-    const BATCH_SIZE = 10;
-    const batches = [];
-
-    for (let i = 0; i < podsToFetch.length; i += BATCH_SIZE) {
-      batches.push(podsToFetch.slice(i, i + BATCH_SIZE));
-    }
-
-    for (const batch of batches) {
-      await Promise.all(
-        batch.map((pod) => {
-          const globalIdx = registryPods.indexOf(pod);
-          return fetchNodeDataAndUpdate(pod, globalIdx);
-        })
-      );
-    }
-
-    setLastUpdate(new Date());
-    setIsLoading(false);
-    setIsCached(false);
-  }, [registryPods, fetchNodeDataAndUpdate]);
-
-  // Handle network change - show cached data immediately, fetch fresh in background
-  const handleNetworkChange = useCallback(async (networkId: string) => {
-    // Reset to loading state first
-    setRegistryStatus("loading");
-
-    // Try to load from cache immediately (instant switch)
-    try {
-      const cachedPods = await getFromDB<NetworkPod[]>(STORES.REGISTRY, cacheKeys.registryPods(networkId));
-      if (cachedPods && cachedPods.length > 0) {
-
-        const cachedNodes = await getAllFromDB<NodeData>(STORES.NODES);
-        const initialNodes = cachedPods.map((pod, idx) => {
-          const cacheKey = cacheKeys.nodeData(pod.address);
-          const cached = cachedNodes.get(cacheKey);
-          if (cached && cached.status !== 'loading') {
-            return cached;
-          }
-          return {
-            ip: pod.address.split(":")[0],
-            address: pod.address,
-            label: pod.pubkey ? `${pod.pubkey.slice(0, 8)}...` : `Node ${idx + 1}`,
-            pubkey: pod.pubkey,
-            registryVersion: pod.version,
-            status: "loading" as const,
-          };
-        });
-
-        const loadedCount = initialNodes.filter(n => n.status !== 'loading').length;
-
-        // Set all state together
-        setRegistryPods(cachedPods);
-        setNodes(initialNodes);
-        setIsCached(true);
-        setRegistryStatus("success");
-        // Set selectedNetwork LAST to trigger useEffect
-        setSelectedNetwork(networkId);
-      } else {
-        // No cache, show loading
-        setNodes([]);
-        setRegistryPods([]);
-        setGeolocations(new Map());
-        setIsCached(false);
-        setSelectedNetwork(networkId);
-        setRegistryStatus("loading");
-      }
-    } catch (err) {
-      setNodes([]);
-      setRegistryPods([]);
-      setGeolocations(new Map());
-      setIsCached(false);
-      setSelectedNetwork(networkId);
-      setRegistryStatus("loading");
-    }
-
-    // Fetch fresh data in background
-    fetchRegistryPods(networkId, false);
-  }, [fetchRegistryPods]);
-
-  useEffect(() => {
-    fetchRegistryPods(selectedNetwork);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Fetch nodes data when registry pods change or network switches
-  // Using a ref to track network changes since React batches state updates
-  const lastFetchedNetworkRef = useRef<string | null>(null);
-
-  useEffect(() => {
-
-    if (registryStatus === "success" && registryPods.length > 0) {
-      // Always fetch if network changed
-      const networkChanged = lastFetchedNetworkRef.current !== selectedNetwork;
-
-      if (networkChanged) {
-        lastFetchedNetworkRef.current = selectedNetwork;
-        fetchAllNodesData();
-      } else {
-        // Same network - only fetch if there are loading nodes
-        const hasLoadingNodes = nodes.some(n => n.status === 'loading');
-        if (hasLoadingNodes) {
-          fetchAllNodesData();
-        } else {
-        }
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registryStatus, registryPods.length, selectedNetwork]);
-
-  // Store geolocation data
+  // Store geolocation data (specific to topology for globe)
   const [geolocations, setGeolocations] = useState<Map<string, { lat: number; lng: number; city: string; country: string; region: string }>>(new Map());
   const [geoLoading, setGeoLoading] = useState(false);
 
@@ -676,7 +289,7 @@ export default function TopologyPage() {
       {NETWORK_RPC_ENDPOINTS.map((network) => (
         <button
           key={network.id}
-          onClick={() => handleNetworkChange(network.id)}
+          onClick={() => setSelectedNetwork(network.id)}
           className={cn(
             "px-3 py-1.5 text-sm font-mono transition-all flex items-center gap-2 border",
             selectedNetwork === network.id
@@ -706,7 +319,7 @@ export default function TopologyPage() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => fetchRegistryPods(selectedNetwork, true)}
+          onClick={() => refreshData(true)}
           disabled={isLoading || registryStatus === "loading"}
         >
           <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
@@ -746,7 +359,7 @@ export default function TopologyPage() {
               variant="destructive"
               size="sm"
               className="mt-4"
-              onClick={() => fetchRegistryPods(selectedNetwork, true)}
+              onClick={() => refreshData(true)}
             >
               Retry
             </Button>

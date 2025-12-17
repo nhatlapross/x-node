@@ -19,6 +19,7 @@ import {
   Droplets,
   BarChart3,
   PieChart as PieChartIcon,
+  Trophy,
 } from "lucide-react";
 import {
   AreaChart,
@@ -48,6 +49,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { getFromDB, setToDB, STORES, CACHE_TTL, cacheKeys } from "@/lib/indexedDB";
 import {
   type TokenMeta,
   type TokenTransfer,
@@ -70,6 +72,7 @@ const navSections: NavSection[] = [
     title: "Overview",
     items: [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
+      { label: "Leaderboard", href: "/leaderboard", icon: Trophy },
       { label: "Activity", href: "/activity", icon: Activity },
     ],
   },
@@ -573,17 +576,58 @@ export default function ActivityPage() {
 
   const { copiedText, copy } = useCopyToClipboard();
 
-  // Fetch data from API
-  const fetchData = useCallback(async () => {
+  // Fetch data from API with IndexedDB caching
+  const fetchData = useCallback(async (skipCache: boolean = false) => {
     setError(null);
-    setLoading({
-      meta: true,
-      transfers: true,
-      holders: true,
-      defi: true,
-      markets: true,
-      analytics: true,
-    });
+
+    // Try loading from cache first for instant display
+    if (!skipCache) {
+      try {
+        const [cachedMeta, cachedTransfers, cachedHolders, cachedDefi, cachedMarkets, cachedPriceHistory] = await Promise.all([
+          getFromDB<TokenMeta>(STORES.META, cacheKeys.activityMeta()),
+          getFromDB<TokenTransfer[]>(STORES.META, cacheKeys.activityTransfers()),
+          getFromDB<{ total: number; items: TokenHolder[] }>(STORES.META, cacheKeys.activityHolders()),
+          getFromDB<DefiActivity[]>(STORES.META, cacheKeys.activityDefi()),
+          getFromDB<TokenMarket[]>(STORES.META, cacheKeys.activityMarkets()),
+          getFromDB<{ time: number; price: number; volume: number }[]>(STORES.META, cacheKeys.activityPriceHistory()),
+        ]);
+
+        // Set cached data immediately for instant page load
+        let hasCache = false;
+        if (cachedMeta) { setTokenMeta(cachedMeta); hasCache = true; }
+        if (cachedTransfers) { setTransfers(cachedTransfers); hasCache = true; }
+        if (cachedHolders) { setHolders(cachedHolders); hasCache = true; }
+        if (cachedDefi) { setDefiActivities(cachedDefi); hasCache = true; }
+        if (cachedMarkets) { setMarkets(cachedMarkets); hasCache = true; }
+        if (cachedPriceHistory) { setPriceHistory(cachedPriceHistory); hasCache = true; }
+
+        // If we have cache, set loading to false and fetch fresh data silently in background
+        if (hasCache) {
+          setLoading({
+            meta: false,
+            transfers: false,
+            holders: false,
+            defi: false,
+            markets: false,
+            analytics: false,
+          });
+        }
+      } catch {
+        // Continue to fetch
+      }
+    }
+
+    // Always fetch fresh data (either showing loading or updating silently in background)
+    if (skipCache || true) {
+      setLoading({
+        meta: true,
+        transfers: true,
+        holders: true,
+        defi: true,
+        markets: true,
+        analytics: true,
+      });
+    }
 
     try {
       // Fetch all data in parallel
@@ -626,6 +670,7 @@ export default function ActivityPage() {
         const data = await metaRes.value.json();
         if (data.success && data.data) {
           setTokenMeta(data.data);
+          setToDB(STORES.META, cacheKeys.activityMeta(), data.data, CACHE_TTL.ACTIVITY_DATA);
         }
       }
       setLoading((prev) => ({ ...prev, meta: false }));
@@ -635,6 +680,7 @@ export default function ActivityPage() {
         const data = await transfersRes.value.json();
         if (data.success && data.data) {
           setTransfers(data.data);
+          setToDB(STORES.META, cacheKeys.activityTransfers(), data.data, CACHE_TTL.ACTIVITY_DATA);
           if (data.pagination) {
             setTransfersPagination(data.pagination);
           }
@@ -647,6 +693,7 @@ export default function ActivityPage() {
         const data = await holdersRes.value.json();
         if (data.success && data.data) {
           setHolders(data.data);
+          setToDB(STORES.META, cacheKeys.activityHolders(), data.data, CACHE_TTL.ACTIVITY_DATA);
         }
       }
       setLoading((prev) => ({ ...prev, holders: false }));
@@ -656,6 +703,7 @@ export default function ActivityPage() {
         const data = await defiRes.value.json();
         if (data.success && data.data) {
           setDefiActivities(data.data);
+          setToDB(STORES.META, cacheKeys.activityDefi(), data.data, CACHE_TTL.ACTIVITY_DATA);
         }
       }
       setLoading((prev) => ({ ...prev, defi: false }));
@@ -665,6 +713,7 @@ export default function ActivityPage() {
         const data = await marketsRes.value.json();
         if (data.success && data.data) {
           setMarkets(data.data);
+          setToDB(STORES.META, cacheKeys.activityMarkets(), data.data, CACHE_TTL.ACTIVITY_DATA);
         }
       }
       setLoading((prev) => ({ ...prev, markets: false }));
@@ -674,6 +723,7 @@ export default function ActivityPage() {
         const data = await priceHistoryRes.value.json();
         if (data.success && data.data) {
           setPriceHistory(data.data);
+          setToDB(STORES.META, cacheKeys.activityPriceHistory(), data.data, CACHE_TTL.ACTIVITY_DATA);
         }
       }
       setLoading((prev) => ({ ...prev, analytics: false }));
@@ -770,7 +820,7 @@ export default function ActivityPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={fetchData}
+              onClick={() => fetchData(true)}
               disabled={Object.values(loading).some(Boolean)}
             >
               <RefreshCw
