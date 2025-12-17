@@ -15,26 +15,26 @@ Backend proxy server to bypass Cloudflare restrictions on Xandeum RPC endpoints,
 
 ### RPC Proxy
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Health check |
-| GET | `/health` | Health status with MongoDB connection |
-| GET | `/api/pods/:network` | Get pods from a network (devnet1, devnet2, mainnet1, mainnet2) |
-| GET | `/api/pods` | Get pods from all networks |
-| POST | `/api/rpc` | Proxy any RPC call |
-| GET | `/api/node/:ip` | Get node data (version, stats, pods) |
-| POST | `/api/nodes/batch` | Batch get multiple nodes |
+| Method | Endpoint             | Description                                                    |
+| ------ | -------------------- | -------------------------------------------------------------- |
+| GET    | `/`                  | Health check                                                   |
+| GET    | `/health`            | Health status with MongoDB connection                          |
+| GET    | `/api/pods/:network` | Get pods from a network (devnet1, devnet2, mainnet1, mainnet2) |
+| GET    | `/api/pods`          | Get pods from all networks                                     |
+| POST   | `/api/rpc`           | Proxy any RPC call                                             |
+| GET    | `/api/node/:ip`      | Get node data (version, stats, pods)                           |
+| POST   | `/api/nodes/batch`   | Batch get multiple nodes                                       |
 
 ### Historical Data (Charts)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/history/network/:network` | Historical data for a network |
-| GET | `/api/history/node/:address` | Historical data for a node |
-| GET | `/api/history/stats` | Aggregated stats across all networks |
-| GET | `/api/history/latest` | Latest cached data from collector |
-| GET | `/api/charts/network/:network` | Pre-formatted chart data |
-| GET | `/api/charts/comparison` | Compare multiple networks |
+| Method | Endpoint                        | Description                          |
+| ------ | ------------------------------- | ------------------------------------ |
+| GET    | `/api/history/network/:network` | Historical data for a network        |
+| GET    | `/api/history/node/:address`    | Historical data for a node           |
+| GET    | `/api/history/stats`            | Aggregated stats across all networks |
+| GET    | `/api/history/latest`           | Latest cached data from collector    |
+| GET    | `/api/charts/network/:network`  | Pre-formatted chart data             |
+| GET    | `/api/charts/comparison`        | Compare multiple networks            |
 
 ### Query Parameters
 
@@ -44,11 +44,11 @@ Backend proxy server to bypass Cloudflare restrictions on Xandeum RPC endpoints,
 
 ## MongoDB Collections
 
-| Collection | Description | TTL |
-|------------|-------------|-----|
+| Collection          | Description              | TTL     |
+| ------------------- | ------------------------ | ------- |
 | `network_snapshots` | Aggregated network stats | 30 days |
-| `node_history` | Individual node stats | 30 days |
-| `pods_snapshots` | Pods list snapshots | - |
+| `node_history`      | Individual node stats    | 30 days |
+| `pods_snapshots`    | Pods list snapshots      | -       |
 
 ## Deploy to Render
 
@@ -65,36 +65,43 @@ Backend proxy server to bypass Cloudflare restrictions on Xandeum RPC endpoints,
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| PORT | 3001 | Server port |
-| ALLOWED_ORIGINS | * | Comma-separated list of allowed origins |
-| MONGODB_URI | - | MongoDB connection URI |
-| COLLECTOR_SCHEDULE | */5 * * * * | Cron schedule for data collection |
+| Variable           | Default        | Description                             |
+| ------------------ | -------------- | --------------------------------------- |
+| PORT               | 3001           | Server port                             |
+| ALLOWED_ORIGINS    | \*             | Comma-separated list of allowed origins |
+| MONGODB_URI        | -              | MongoDB connection URI                  |
+| COLLECTOR_SCHEDULE | _/5 _ \* \* \* | Cron schedule for data collection       |
 
 ## Usage Examples
 
 ### Get pods from devnet1
+
 ```javascript
-const response = await fetch('https://your-proxy.onrender.com/api/pods/devnet1');
+const response = await fetch(
+  "https://your-proxy.onrender.com/api/pods/devnet1"
+);
 const data = await response.json();
 ```
 
 ### Proxy RPC call
+
 ```javascript
-const response = await fetch('https://your-proxy.onrender.com/api/rpc', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+const response = await fetch("https://your-proxy.onrender.com/api/rpc", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
-    endpoint: 'https://rpc1.pchednode.com/rpc',
-    method: 'get-pods'
-  })
+    endpoint: "https://rpc1.pchednode.com/rpc",
+    method: "get-pods",
+  }),
 });
 ```
 
 ### Get chart data for 24h
+
 ```javascript
-const response = await fetch('https://your-proxy.onrender.com/api/charts/network/devnet1?period=24h');
+const response = await fetch(
+  "https://your-proxy.onrender.com/api/charts/network/devnet1?period=24h"
+);
 const { charts } = await response.json();
 
 // charts.nodes - Node count over time
@@ -103,8 +110,11 @@ const { charts } = await response.json();
 ```
 
 ### Compare networks
+
 ```javascript
-const response = await fetch('https://your-proxy.onrender.com/api/charts/comparison?period=7d');
+const response = await fetch(
+  "https://your-proxy.onrender.com/api/charts/comparison?period=7d"
+);
 const { data } = await response.json();
 
 // data.devnet1, data.devnet2, data.mainnet1, data.mainnet2
@@ -155,12 +165,8 @@ The `/api/charts/network/:network` endpoint returns pre-formatted data for recha
     "nodes": [
       { "time": 1702800000000, "online": 150, "offline": 10, "total": 204 }
     ],
-    "resources": [
-      { "time": 1702800000000, "cpu": 25.5, "ram": 45.2 }
-    ],
-    "storage": [
-      { "time": 1702800000000, "storage": 1073741824, "streams": 50 }
-    ]
+    "resources": [{ "time": 1702800000000, "cpu": 25.5, "ram": 45.2 }],
+    "storage": [{ "time": 1702800000000, "storage": 1073741824, "streams": 50 }]
   }
 }
 ```
