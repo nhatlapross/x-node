@@ -270,13 +270,40 @@ export default function Home() {
     }
   };
 
-  // Call RPC endpoint directly (for HTTPS endpoints)
+  // Call RPC endpoint - try direct first (browser can pass Cloudflare), fallback to proxy
   const callRpcEndpoint = async (
     rpcUrl: string,
     method: string
   ): Promise<{ result?: unknown; error?: string }> => {
-    try {
+    const payload = {
+      jsonrpc: "2.0",
+      method: method,
+      id: 1,
+    };
 
+    // Try direct fetch from browser first (can bypass Cloudflare JS challenge)
+    try {
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.result) {
+          return { result: data.result };
+        }
+        if (data.error) {
+          return { error: data.error };
+        }
+      }
+    } catch {
+      // Direct fetch failed (CORS or network error), try proxy
+    }
+
+    // Fallback to server proxy
+    try {
       const response = await fetch("/api/prpc", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
