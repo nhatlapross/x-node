@@ -322,7 +322,6 @@ export default function LeaderboardPage() {
           compareMode={compareMode}
           selectedForCompare={selectedForCompare}
           onToggleCompare={handleToggleCompare}
-          formatBytes={formatBytes}
           formatUptime={formatUptime}
         />
       )}

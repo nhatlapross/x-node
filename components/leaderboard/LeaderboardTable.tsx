@@ -4,28 +4,7 @@ import { Star, CheckSquare, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { RankBadge } from './RankBadge'
 import { cn } from '@/lib/utils'
-
-interface NodeData {
-  ip: string
-  address: string
-  label: string
-  pubkey: string | null
-  registryVersion: string
-  status: 'online' | 'offline' | 'loading'
-  version?: { version: string }
-  stats?: {
-    cpu_percent: number
-    ram_used: number
-    ram_total: number
-    file_size: number
-    uptime: number
-  }
-  location?: {
-    city: string
-    country: string
-    countryCode?: string
-  }
-}
+import { type NodeData } from '@/contexts/NodesContext'
 
 interface LeaderboardEntry {
   node: NodeData
@@ -41,7 +20,6 @@ interface LeaderboardTableProps {
   compareMode: boolean
   selectedForCompare: Set<string>
   onToggleCompare: (pubkey: string) => void
-  formatBytes: (bytes: number) => string
   formatUptime: (seconds: number) => string
 }
 
@@ -53,7 +31,6 @@ export function LeaderboardTable({
   compareMode,
   selectedForCompare,
   onToggleCompare,
-  formatBytes,
   formatUptime,
 }: LeaderboardTableProps) {
   if (entries.length === 0) {
