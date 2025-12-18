@@ -47,10 +47,16 @@ Xandeum is building a scalable storage layer for Solana dApps - a second tier of
 
 ### Historical Data & Charts
 - Network statistics over time (1h, 6h, 24h, 7d, 30d)
-- Node count trends
-- Resource utilization history
+- Node count trends (online/offline/total nodes)
+- Resource utilization history (CPU, RAM, Storage)
+- Storage capacity tracking over time
+- Pod credits accumulation and usage
 - MongoDB-backed data persistence
 - Auto-collection every 5 minutes
+- Interactive charts with zoom and pan capabilities
+- Export historical data to CSV format
+- Data aggregation for performance optimization
+- Real-time chart updates without page refresh
 
 ## Tech Stack
 
@@ -97,6 +103,46 @@ POST /rpc
 }
 ```
 
+### Historical Data Collection
+
+The platform runs a background data collector that:
+
+1. Fetches pNode statistics from all network endpoints every 5 minutes
+2. Stores aggregated data in MongoDB with timestamp indexing
+3. Calculates historical trends and metrics
+4. Updates charts with real-time data
+5. Implements data retention policies (keeps last 30 days of detailed data)
+6. Provides aggregated data points for older time ranges
+
+#### MongoDB Schema
+
+```javascript
+// Historical network statistics collection
+{
+  timestamp: Date,           // Indexed for efficient queries
+  network: String,          // devnet1, devnet2, mainnet1, mainnet2
+  totalNodes: Number,
+  onlineNodes: Number,
+  offlineNodes: Number,
+  totalStorage: Number,     // In GB
+  avgCpuUsage: Number,      // Percentage
+  avgRamUsage: Number,      // Percentage
+  versions: [{
+    version: String,
+    count: Number
+  }],
+  totalPodCredits: Number,
+  createdAt: Date
+}
+```
+
+#### Data Aggregation Strategy
+
+- **Raw data**: Collected every 5 minutes (last 24 hours)
+- **Hourly averages**: Aggregated from raw data (last 7 days)
+- **Daily summaries**: Aggregated from hourly data (last 30 days)
+- **Compression**: Older data is compressed to reduce storage
+
 ### Architecture
 
 ```
@@ -105,12 +151,18 @@ POST /rpc
 │  (Next.js)      │     │  (Express)      │     │ (Cloudflare)    │
 │  Vercel         │     │  Render         │     │                 │
 └─────────────────┘     └────────┬────────┘     └─────────────────┘
-                                 │
-                                 ▼
-                        ┌─────────────────┐
-                        │   MongoDB       │
-                        │   (Historical)  │
-                        └─────────────────┘
+                                 │                     ▲
+                                 ▼                     │
+                        ┌─────────────────┐             │
+                        │   MongoDB       │             │
+                        │   (Historical)  │             │
+                        └─────────────────┘             │
+                       ▲                              │
+                       │                              │
+                ┌──────┴───────┐                      │
+                │ Data Collector│ ◄──────────────────┘
+                │ (Cron Job)   │  Every 5 minutes
+                └──────────────┘
 ```
 
 ### Network Endpoints
@@ -138,6 +190,14 @@ POST /rpc
 - Token price charts
 - Transfer history
 - Holder distribution
+
+### Historical Charts View
+- Interactive time-series charts for all network metrics
+- Zoomable and scrollable chart interface
+- Time range selector (1h, 6h, 24h, 7d, 30d)
+- Multi-metric overlay support
+- Real-time data updates
+- Export functionality for data analysis
 
 ## Getting Started
 
@@ -217,6 +277,34 @@ COLLECTOR_SCHEDULE=*/5 * * * *
 | POST | `/api/rpc` | Proxy any pRPC call |
 | GET | `/api/node/:ip` | Get individual node data |
 | GET | `/api/charts/network/:network` | Historical chart data |
+| GET | `/api/history/:network?range=24h` | Get historical data for specific time range |
+| GET | `/api/history/export/:network?format=csv` | Export historical data |
+
+#### Historical Data API Parameters
+
+**Query Parameters for `/api/history/:network`:**
+- `range`: Time range (`1h`, `6h`, `24h`, `7d`, `30d`) - default: `24h`
+- `aggregation`: Data aggregation level (`raw`, `hourly`, `daily`) - default: auto
+- `metrics`: Specific metrics to return (comma-separated) - default: all
+
+**Response Format:**
+```json
+{
+  "success": true,
+  "data": {
+    "timestamps": ["2024-01-01T00:00:00Z", ...],
+    "totalNodes": [100, 102, 101, ...],
+    "onlineNodes": [95, 97, 96, ...],
+    "avgCpuUsage": [45.2, 46.1, 44.8, ...],
+    "totalStorage": [1024, 1030, 1028, ...]
+  },
+  "summary": {
+    "min": {...},
+    "max": {...},
+    "avg": {...}
+  }
+}
+```
 
 ## Deployment
 
