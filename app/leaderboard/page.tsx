@@ -68,7 +68,6 @@ const navSections: NavSection[] = [
   {
     title: "Network",
     items: [
-      { label: "Nodes", href: "/", icon: Server },
       { label: "Topology", href: "/topology", icon: Network },
     ],
   },

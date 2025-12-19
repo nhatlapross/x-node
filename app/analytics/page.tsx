@@ -3,7 +3,6 @@
 import { useState, useMemo } from "react";
 import {
   LayoutDashboard,
-  Server,
   Activity,
   RefreshCw,
   Trophy,
@@ -11,6 +10,7 @@ import {
   BarChart3,
   TrendingUp,
   Clock,
+  Server,
 } from "lucide-react";
 import { DashboardLayout, PageHeader, type NavSection } from "@/components/layout";
 import { Logo, LogoIcon, FadeIn, BracketCard } from "@/components/common";
@@ -45,7 +45,6 @@ const navSections: NavSection[] = [
   {
     title: "Network",
     items: [
-      { label: "Nodes", href: "/", icon: Server },
       { label: "Topology", href: "/topology", icon: Network },
     ],
   },

@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   LayoutDashboard,
-  Server,
   Activity,
   RefreshCw,
   Globe,
@@ -97,7 +96,6 @@ const navSections: NavSection[] = [
   {
     title: "Network",
     items: [
-      { label: "Nodes", href: "/", icon: Server },
       { label: "Topology", href: "/topology", icon: Network },
     ],
   },
