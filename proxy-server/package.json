@@ -11,6 +11,7 @@
     "db:clear:history": "node scripts/clearDB.js history"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "abort-controller": "^3.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",

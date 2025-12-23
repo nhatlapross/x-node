@@ -503,6 +503,147 @@ app.get('/api/charts/comparison', async (req, res) => {
 });
 
 // ============================================
+// Pod Credits API
+// ============================================
+
+// Pod Credits API URL
+const POD_CREDITS_API = 'https://podcredits.xandeum.network/api/pods-credits';
+
+// Cache for pod credits
+let podCreditsCache = null;
+let podCreditsExpiry = 0;
+const POD_CREDITS_CACHE_TTL = 60 * 1000; // 1 minute
+
+/**
+ * GET /api/pod-credits
+ * Get pod credits from Xandeum network
+ */
+app.get('/api/pod-credits', async (req, res) => {
+  // Check cache
+  if (podCreditsCache && Date.now() < podCreditsExpiry) {
+    return res.json(podCreditsCache);
+  }
+
+  try {
+    const response = await fetch(POD_CREDITS_API, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'XandeumProxy/1.0',
+      },
+      timeout: 10000,
+    });
+
+    if (!response.ok) {
+      console.error('[PodCredits] Failed:', response.status);
+      return res.status(response.status).json({
+        error: `Failed to fetch pod credits: ${response.status}`,
+      });
+    }
+
+    const data = await response.json();
+
+    // Cache the result
+    podCreditsCache = data;
+    podCreditsExpiry = Date.now() + POD_CREDITS_CACHE_TTL;
+
+    res.json(data);
+  } catch (error) {
+    console.error('[PodCredits] Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Helper function to get pod credits (for internal use)
+ */
+async function fetchPodCredits() {
+  // Return from cache if valid
+  if (podCreditsCache && Date.now() < podCreditsExpiry) {
+    return podCreditsCache;
+  }
+
+  try {
+    const response = await fetch(POD_CREDITS_API, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'XandeumProxy/1.0',
+      },
+      timeout: 10000,
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+
+    // Cache the result
+    podCreditsCache = data;
+    podCreditsExpiry = Date.now() + POD_CREDITS_CACHE_TTL;
+
+    return data;
+  } catch (error) {
+    console.error('[PodCredits] Error:', error.message);
+    return null;
+  }
+}
+
+// ============================================
+// AI Chat API for Frontend
+// ============================================
+
+/**
+ * POST /api/ai/ask
+ * Ask AI about network status
+ * Body: { question: string }
+ */
+app.post('/api/ai/ask', async (req, res) => {
+  const { question } = req.body;
+
+  if (!question || typeof question !== 'string') {
+    return res.status(400).json({ success: false, error: 'Missing or invalid question' });
+  }
+
+  if (question.length > 500) {
+    return res.status(400).json({ success: false, error: 'Question too long (max 500 characters)' });
+  }
+
+  try {
+    const result = await telegramBot.askAI(question);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        question,
+        answer: result.response,
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error || 'AI processing failed',
+      });
+    }
+  } catch (error) {
+    console.error('[AI API] Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/ai/status
+ * Check if AI is available
+ */
+app.get('/api/ai/status', (req, res) => {
+  const isAIEnabled = !!process.env.GEMINI_API_KEY;
+  res.json({
+    success: true,
+    aiEnabled: isAIEnabled,
+    model: isAIEnabled ? 'gemini-2.0-flash' : null,
+  });
+});
+
+// ============================================
 // Server Startup
 // ============================================
 
@@ -516,8 +657,9 @@ async function startServer() {
 
   // Initialize Telegram bot
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const geminiApiKey = process.env.GEMINI_API_KEY;
   if (botToken) {
-    telegramBot.initBot(botToken);
+    telegramBot.initBot(botToken, geminiApiKey);
     console.log('Telegram bot: enabled');
   } else {
     console.log('Telegram bot: disabled (no TELEGRAM_BOT_TOKEN)');
